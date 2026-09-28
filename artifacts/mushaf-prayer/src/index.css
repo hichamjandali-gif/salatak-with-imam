@@ -1,0 +1,102 @@
+@import url('https://fonts.googleapis.com/css2?family=Amiri:wght@400;700&family=Tajawal:wght@400;500;700;800&display=swap');
+@import 'tailwindcss';
+@import 'tw-animate-css';
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --color-background: hsl(var(--background));
+  --color-foreground: hsl(var(--foreground));
+  --color-border: hsl(var(--border));
+  --color-input: hsl(var(--input));
+  --color-ring: hsl(var(--ring));
+  --color-card: hsl(var(--card));
+  --color-card-foreground: hsl(var(--card-foreground));
+  --color-primary: hsl(var(--primary));
+  --color-primary-foreground: hsl(var(--primary-foreground));
+  --color-secondary: hsl(var(--secondary));
+  --color-secondary-foreground: hsl(var(--secondary-foreground));
+  --color-muted: hsl(var(--muted));
+  --color-muted-foreground: hsl(var(--muted-foreground));
+  --color-accent: hsl(var(--accent));
+  --color-accent-foreground: hsl(var(--accent-foreground));
+  --font-sans: var(--app-font-sans);
+  --font-serif: var(--app-font-serif);
+  --radius-lg: 1.15rem;
+  --radius-md: .8rem;
+  --radius-sm: .55rem;
+}
+
+:root {
+  --background: 39 45% 95%;
+  --foreground: 203 31% 17%;
+  --border: 38 24% 85%;
+  --input: 38 24% 82%;
+  --ring: 169 34% 35%;
+  --card: 42 50% 98%;
+  --card-foreground: 203 31% 17%;
+  --primary: 169 35% 30%;
+  --primary-foreground: 39 45% 97%;
+  --secondary: 36 37% 89%;
+  --secondary-foreground: 203 31% 24%;
+  --muted: 37 25% 90%;
+  --muted-foreground: 201 13% 44%;
+  --accent: 39 64% 54%;
+  --accent-foreground: 31 34% 16%;
+  --destructive: 7 58% 47%;
+  --app-font-sans: 'Tajawal', sans-serif;
+  --app-font-serif: 'Amiri', serif;
+  --radius: 1.15rem;
+}
+
+.dark {
+  --background: 204 30% 10%;
+  --foreground: 39 37% 91%;
+  --border: 203 19% 25%;
+  --input: 203 19% 25%;
+  --ring: 168 38% 55%;
+  --card: 203 27% 14%;
+  --card-foreground: 39 37% 91%;
+  --primary: 168 36% 55%;
+  --primary-foreground: 204 31% 11%;
+  --secondary: 203 21% 21%;
+  --secondary-foreground: 39 37% 91%;
+  --muted: 203 19% 20%;
+  --muted-foreground: 203 12% 65%;
+  --accent: 39 63% 57%;
+  --accent-foreground: 203 31% 12%;
+  --destructive: 7 64% 58%;
+}
+
+@layer base {
+  * { @apply border-border; }
+  html { background: hsl(var(--background)); }
+  body {
+    @apply font-sans antialiased bg-background text-foreground;
+    margin: 0;
+    min-width: 320px;
+  }
+  button, a, input, select { -webkit-tap-highlight-color: transparent; }
+  button { font: inherit; }
+}
+
+@layer utilities {
+  .font-arabic { font-family: var(--app-font-serif); }
+  .safe-bottom { padding-bottom: max(1rem, env(safe-area-inset-bottom)); }
+  .safe-top { padding-top: max(.75rem, env(safe-area-inset-top)); }
+  .pattern-star {
+    background-image: radial-gradient(hsl(var(--accent) / .14) 1px, transparent 1px);
+    background-size: 14px 14px;
+  }
+  .soft-shadow { box-shadow: 0 18px 44px hsl(203 31% 17% / .08), 0 2px 8px hsl(203 31% 17% / .04); }
+  .dark .soft-shadow { box-shadow: 0 18px 44px hsl(0 0% 0% / .22); }
+}
+
+::selection { background: hsl(var(--accent) / .4); color: hsl(var(--foreground)); }
+
+@keyframes rise-in { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes breathe { 0%, 100% { opacity: .65; } 50% { opacity: 1; } }
+.animate-rise { animation: rise-in .5s ease both; }
+.animate-rise-delay-1 { animation: rise-in .5s .08s ease both; }
+.animate-rise-delay-2 { animation: rise-in .5s .16s ease both; }
+.animate-breathe { animation: breathe 3s ease-in-out infinite; }

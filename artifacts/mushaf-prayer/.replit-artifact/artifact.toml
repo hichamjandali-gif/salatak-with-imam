@@ -1,0 +1,28 @@
+kind = "web"
+previewPath = "/"
+title = "المصحف والصلاة"
+description = "تطبيق عربي RTL للهاتف يجمع القرآن الكريم، مواقيت الصلاة، القبلة، الأذكار، والتقويم الهجري مع حفظ الإعدادات محلياً ودعم PWA."
+version = "1.0.0"
+id = "artifacts/mushaf-prayer"
+router = "path"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 20206
+
+[services.development]
+run = "pnpm --filter @workspace/mushaf-prayer run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/mushaf-prayer", "run", "build" ]
+serve = "static"
+publicDir = "artifacts/mushaf-prayer/dist/public"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "20206"
+BASE_PATH = "/"

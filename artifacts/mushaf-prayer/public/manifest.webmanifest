@@ -1,0 +1,19 @@
+{
+  "name": "المصحف والصلاة",
+  "short_name": "المصحف والصلاة",
+  "description": "مساحة هادئة لمواقيت الصلاة والقرآن والقبلة والأذكار.",
+  "lang": "ar",
+  "dir": "rtl",
+  "start_url": "./",
+  "display": "standalone",
+  "background_color": "#f4efe4",
+  "theme_color": "#174e4a",
+  "icons": [
+    {
+      "src": "./favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
