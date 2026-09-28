@@ -33,6 +33,7 @@ import { Link, Route, Router as WouterRouter, Switch, useLocation, useParams } f
 
 type Theme = 'light' | 'dark';
 type Coordinates = { latitude: number; longitude: number };
+type LocationSource = 'default' | 'device' | 'manual';
 type SettingsState = {
   theme: Theme;
   fontSize: number;
@@ -57,6 +58,7 @@ const METHODS = [
   { value: '5', label: 'الهيئة المصرية العامة للمساحة' },
 ];
 const DEFAULT_COORDS: Coordinates = { latitude: 21.4225, longitude: 39.8262 };
+const DEFAULT_LOCATION_NAME = 'مكة المكرمة، السعودية';
 const PRAYER_STORAGE = 'mushaf-prayer-settings';
 // Audio is intentionally isolated here so a future recitation endpoint can be
 // connected without changing the Quran reader's data model.
@@ -99,6 +101,29 @@ const adhkarSets = {
   },
 } as const;
 
+const BASMALA_PATTERN = /^بِسْمِ\s+(?:ٱ|ا)?للَّهِ\s+ٱ?لرَّحْمَٰنِ\s+ٱ?لرَّحِيمِ/;
+
+function isValidCoordinates(value: Coordinates) {
+  return Number.isFinite(value.latitude)
+    && Number.isFinite(value.longitude)
+    && value.latitude >= -90
+    && value.latitude <= 90
+    && value.longitude >= -180
+    && value.longitude <= 180;
+}
+
+function getPlaceLabel(address?: Record<string, string>) {
+  if (!address) return null;
+  const city = address.city ?? address.town ?? address.village ?? address.municipality ?? address.state;
+  const country = address.country;
+  return [city, country].filter(Boolean).join('، ') || null;
+}
+
+function clampProgress(value: unknown, maximum: number) {
+  const numeric = typeof value === 'number' && Number.isFinite(value) ? value : 0;
+  return Math.min(maximum, Math.max(0, Math.floor(numeric)));
+}
+
 function readStorage<T>(key: string, fallback: T): T {
   try {
     const value = window.localStorage.getItem(key);
@@ -140,8 +165,14 @@ type AppContextValue = {
   settings: SettingsState;
   setSettings: Dispatch<SetStateAction<SettingsState>>;
   coords: Coordinates;
+  setCoords: Dispatch<SetStateAction<Coordinates>>;
   locationName: string;
+  setLocationName: Dispatch<SetStateAction<string>>;
+  locationSource: LocationSource;
+  setLocationSource: Dispatch<SetStateAction<LocationSource>>;
   refreshLocation: () => void;
+  findManualLocation: (query: string) => Promise<void>;
+  manualLocationState: 'idle' | 'loading' | 'error';
   locationState: 'idle' | 'loading' | 'ready' | 'error';
   favorites: number[];
   setFavorites: Dispatch<SetStateAction<number[]>>;
@@ -160,8 +191,11 @@ function useApp() {
 function AppShell({ children }: { children: ReactNode }) {
   const [settings, setSettings] = useLocalState<SettingsState>(PRAYER_STORAGE, { theme: 'light', fontSize: 30, method: '4', notifications: false });
   const [coords, setCoords] = useLocalState<Coordinates>('mushaf-coordinates', DEFAULT_COORDS);
-  const [locationName, setLocationName] = useLocalState('mushaf-location-name', 'مكة المكرمة');
+  const [locationName, setLocationName] = useLocalState('mushaf-location-name', DEFAULT_LOCATION_NAME);
+  const [locationSource, setLocationSource] = useLocalState<LocationSource>('mushaf-location-source', 'default');
+  const [locationPermission, setLocationPermission] = useLocalState<'unknown' | 'granted' | 'denied'>('mushaf-location-permission', 'unknown');
   const [locationState, setLocationState] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle');
+  const [manualLocationState, setManualLocationState] = useState<'idle' | 'loading' | 'error'>('idle');
   const [favorites, setFavorites] = useLocalState<number[]>('mushaf-favorites', []);
   const [bookmarks, setBookmarks] = useLocalState<string[]>('mushaf-bookmarks', []);
   const [lastRead, setLastRead] = useLocalState<{ surah: number; ayah: number } | null>('mushaf-last-read', null);
@@ -171,22 +205,57 @@ function AppShell({ children }: { children: ReactNode }) {
     document.documentElement.dir = 'rtl';
     document.documentElement.lang = 'ar';
   }, [settings.theme]);
-  useEffect(() => {
-    if ('serviceWorker' in navigator) navigator.serviceWorker.register(`${import.meta.env.BASE_URL}sw.js`).catch(() => undefined);
-  }, []);
   const refreshLocation = () => {
     if (!navigator.geolocation) { setLocationState('error'); return; }
     setLocationState('loading');
     navigator.geolocation.getCurrentPosition(
       (position) => {
         const next = { latitude: position.coords.latitude, longitude: position.coords.longitude };
-        setCoords(next); setLocationName('موقعك الحالي'); setLocationState('ready');
+        setCoords(next);
+        setLocationSource('device');
+        setLocationName('موقعك الحالي');
+        setLocationPermission('granted');
+        setLocationState('ready');
+        fetch(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${next.latitude}&lon=${next.longitude}&accept-language=ar`)
+          .then((response) => response.ok ? response.json() : Promise.reject(new Error('reverse geocoding failed')))
+          .then((json: { address?: Record<string, string> }) => {
+            const label = getPlaceLabel(json.address);
+            if (label) setLocationName(label);
+          })
+          .catch(() => undefined);
       },
-      () => setLocationState('error'),
+      () => {
+        setLocationPermission('denied');
+        setLocationState('error');
+      },
       { enableHighAccuracy: true, timeout: 10000, maximumAge: 300000 },
     );
   };
-  const value = { settings, setSettings, coords, locationName, refreshLocation, locationState, favorites, setFavorites, bookmarks, setBookmarks, lastRead, setLastRead };
+  const findManualLocation = async (query: string) => {
+    const trimmed = query.trim();
+    if (!trimmed) return;
+    setManualLocationState('loading');
+    try {
+      const response = await fetch(`https://nominatim.openstreetmap.org/search?format=jsonv2&limit=1&accept-language=ar&q=${encodeURIComponent(trimmed)}`);
+      if (!response.ok) throw new Error('manual geocoding failed');
+      const results = await response.json() as Array<{ lat?: string; lon?: string; display_name?: string; address?: Record<string, string> }>;
+      const result = results[0];
+      const next = { latitude: Number(result?.lat), longitude: Number(result?.lon) };
+      if (!result || !isValidCoordinates(next)) throw new Error('location not found');
+      setCoords(next);
+      setLocationName(getPlaceLabel(result.address) ?? result.display_name ?? trimmed);
+      setLocationSource('manual');
+      setLocationState('ready');
+      setManualLocationState('idle');
+    } catch {
+      setManualLocationState('error');
+    }
+  };
+  useEffect(() => {
+    if ('serviceWorker' in navigator) navigator.serviceWorker.register(`${import.meta.env.BASE_URL}sw.js`).catch(() => undefined);
+    if (locationPermission === 'unknown') refreshLocation();
+  }, []);
+  const value = { settings, setSettings, coords, setCoords, locationName, setLocationName, locationSource, setLocationSource, refreshLocation, findManualLocation, manualLocationState, locationState, favorites, setFavorites, bookmarks, setBookmarks, lastRead, setLastRead };
   return <AppContext.Provider value={value}><div className="min-h-[100dvh] bg-background">{children}</div></AppContext.Provider>;
 }
 
@@ -224,7 +293,7 @@ function TopBar({ title, back = false }: { title: string; back?: boolean }) {
   </header>;
 }
 function PageFrame({ children, title, back = false }: { children: ReactNode; title: string; back?: boolean }) {
-  return <div className="mx-auto min-h-[100dvh] max-w-[680px] pb-28"><TopBar title={title} back={back} />{children}<BottomNav /></div>;
+  return <div className="mx-auto min-h-[100dvh] max-w-[680px] overflow-x-hidden pb-28"><TopBar title={title} back={back} />{children}<BottomNav /></div>;
 }
 function SectionHeading({ eyebrow, title, action }: { eyebrow?: string; title: string; action?: ReactNode }) {
   return <div className="mb-4 flex items-end justify-between gap-3"><div>{eyebrow && <p className="mb-1 text-[11px] font-bold tracking-[.16em] text-accent">{eyebrow}</p>}<h2 className="text-xl font-extrabold">{title}</h2></div>{action}</div>;
@@ -246,7 +315,18 @@ function usePrayerTimes() {
   const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading');
   const load = () => {
     setStatus('loading');
-    fetch(prayerApiUrl(coords, settings.method)).then((response) => { if (!response.ok) throw new Error(); return response.json(); }).then((json) => { setTimes(json.data.timings); setStatus('ready'); }).catch(() => setStatus('error'));
+    fetch(prayerApiUrl(coords, settings.method))
+      .then((response) => { if (!response.ok) throw new Error(); return response.json(); })
+      .then((json: { data?: { timings?: Record<string, string> } }) => {
+        const nextTimes = json.data?.timings;
+        if (!nextTimes || PRAYERS.some(({ key }) => !nextTimes[key])) throw new Error('incomplete prayer times');
+        setTimes(nextTimes);
+        setStatus('ready');
+      })
+      .catch(() => {
+        setTimes(null);
+        setStatus('error');
+      });
   };
   useEffect(load, [coords.latitude, coords.longitude, settings.method]);
   return { times, status, retry: load };
@@ -255,19 +335,21 @@ function useCountdown(times: Record<string, string> | null) {
   const [now, setNow] = useState(Date.now());
   useEffect(() => { const interval = window.setInterval(() => setNow(Date.now()), 30000); return () => window.clearInterval(interval); }, []);
   const upcoming = useMemo(() => {
+    if (!times) return null;
     const all = PRAYERS.filter((prayer) => prayer.key !== 'Sunrise').map((prayer) => {
-      const [hour, minute] = (times?.[prayer.key] ?? '00:00').split(':').map(Number);
+      const [hour, minute] = times[prayer.key].split(':').map(Number);
       const date = new Date(); date.setHours(hour, minute, 0, 0);
       return { prayer, date };
     });
     return all.find((item) => item.date.getTime() > now) ?? { prayer: PRAYERS[0], date: new Date(all[0].date.getTime() + 86400000) };
   }, [times, now]);
+  if (!upcoming) return { upcoming: null, countdown: '—:—' };
   const diff = Math.max(0, upcoming.date.getTime() - now);
   return { upcoming, countdown: `${String(Math.floor(diff / 3600000)).padStart(2, '0')}:${String(Math.floor((diff % 3600000) / 60000)).padStart(2, '0')}` };
 }
 
 function HomePage() {
-  const { locationName, locationState, refreshLocation, lastRead } = useApp();
+  const { locationName, locationSource, locationState, refreshLocation, lastRead } = useApp();
   const { times, status, retry } = usePrayerTimes();
   const { upcoming, countdown } = useCountdown(times);
   const [today] = useState(new Date());
@@ -277,17 +359,18 @@ function HomePage() {
         <div className="absolute -left-8 -top-10 h-36 w-36 rounded-full border border-accent/30" /><div className="absolute -left-1 top-0 h-24 w-24 rounded-full border border-accent/20" />
         <div className="relative">
           <div className="flex items-center justify-between"><div><p className="text-sm text-primary-foreground/65">{formatGregorianDate(today)}</p><p className="mt-1 text-xs text-accent">{formatArabicDate(today)}</p></div><span className="rounded-full border border-primary-foreground/20 px-3 py-1 text-[11px]">يوم مبارك</span></div>
-          <div className="mt-8 flex items-end justify-between"><div><p className="text-xs text-primary-foreground/65">الصلاة القادمة</p><h2 className="mt-1 text-3xl font-extrabold">{upcoming.prayer.label}</h2><p className="mt-1 text-sm text-primary-foreground/70">{formatTime(times?.[upcoming.prayer.key])}</p></div><div className="text-left"><p className="text-[10px] text-primary-foreground/60">متبقي</p><p className="font-mono text-2xl font-bold tracking-wider">{countdown}</p></div></div>
+          <div className="mt-8 flex items-end justify-between"><div><p className="text-xs text-primary-foreground/65">الصلاة القادمة</p><h2 className="mt-1 text-3xl font-extrabold">{upcoming?.prayer.label ?? 'جاري الحساب'}</h2><p className="mt-1 text-sm text-primary-foreground/70">{formatTime(upcoming ? times?.[upcoming.prayer.key] : undefined)}</p></div><div className="text-left"><p className="text-[10px] text-primary-foreground/60">متبقي</p><p className="font-mono text-2xl font-bold tracking-wider">{countdown}</p></div></div>
         </div>
       </section>
       <section className="animate-rise-delay-1">
         <div className="mb-3 flex items-center justify-between"><SectionHeading eyebrow="مواقيت اليوم" title="الصلوات" /><button onClick={retry} data-testid="button-refresh-prayers" aria-label="تحديث مواقيت الصلاة" className="mb-1 rounded-full p-2 text-muted-foreground hover:bg-secondary"><RefreshCw size={17} className={status === 'loading' ? 'animate-spin' : ''} /></button></div>
-        {status === 'error' ? <FriendlyError onRetry={retry} message="تعذّر تحميل مواقيت الصلاة" /> : status === 'loading' ? <div className="flex gap-2 overflow-hidden">{[1, 2, 3, 4, 5].map((x) => <Skeleton key={x} className="h-[100px] min-w-[92px] flex-1" />)}</div> : <div className="flex gap-2 overflow-x-auto pb-1">{PRAYERS.map((prayer) => <PrayerCard key={prayer.key} prayer={prayer} time={formatTime(times?.[prayer.key])} next={prayer.key === upcoming.prayer.key} />)}</div>}
+        {status === 'error' ? <FriendlyError onRetry={retry} message="تعذّر تحميل مواقيت الصلاة" /> : status === 'loading' ? <div className="flex gap-2 overflow-hidden">{[1, 2, 3, 4, 5].map((x) => <Skeleton key={x} className="h-[100px] min-w-[92px] flex-1" />)}</div> : <div className="flex gap-2 overflow-x-auto pb-1">{PRAYERS.map((prayer) => <PrayerCard key={prayer.key} prayer={prayer} time={formatTime(times?.[prayer.key])} next={prayer.key === upcoming?.prayer.key} />)}</div>}
       </section>
       <section className="flex items-center justify-between rounded-2xl border border-border bg-card px-4 py-3 animate-rise-delay-1">
-        <div className="flex items-center gap-3"><span className="grid h-9 w-9 place-items-center rounded-full bg-accent/15 text-accent"><MapPin size={17} /></span><div><p className="text-xs text-muted-foreground">الموقع</p><p className="text-sm font-bold">{locationName}</p></div></div>
+         <div className="flex min-w-0 items-center gap-3"><span className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-accent/15 text-accent"><MapPin size={17} /></span><div className="min-w-0"><p className="text-xs text-muted-foreground">الموقع {locationSource === 'default' && 'الافتراضي'}</p><p className="truncate text-sm font-bold">{locationName}</p></div></div>
         <button onClick={refreshLocation} disabled={locationState === 'loading'} data-testid="button-refresh-location-home" className="flex min-h-10 items-center gap-1 rounded-lg px-2 text-xs font-bold text-primary disabled:opacity-50">{locationState === 'loading' ? <RefreshCw size={14} className="animate-spin" /> : <LocateFixed size={14} />} تحديث</button>
       </section>
+      {locationSource === 'default' && <p className="text-xs leading-5 text-muted-foreground">هذا موقع افتراضي. حدّد موقعك من زر «تحديث» أو اختر مدينة يدوياً من الإعدادات.</p>}
       {locationState === 'error' && <p className="text-xs text-destructive">لم نتمكن من الوصول للموقع. تأكد من إذن الموقع أو اختر موقعك الافتراضي من الإعدادات.</p>}
       <section className="animate-rise-delay-2"><SectionHeading eyebrow="اقترب أكثر" title="مساراتك اليومية" />
         <div className="grid grid-cols-2 gap-3">
@@ -305,13 +388,42 @@ async function fetchSurahs(): Promise<Surah[]> {
   const response = await fetch('https://api.alquran.cloud/v1/surah');
   if (!response.ok) throw new Error();
   const json = await response.json();
-  return json.data;
+  const list = json.data as unknown;
+  if (!Array.isArray(list) || list.length !== 114) throw new Error('invalid Quran catalog length');
+  list.forEach((item, index) => {
+    const surah = item as Partial<Surah>;
+    if (
+      surah.number !== index + 1
+      || typeof surah.name !== 'string'
+      || !surah.name.trim()
+      || !Number.isInteger(surah.numberOfAyahs)
+      || surah.numberOfAyahs < 1
+      || typeof surah.englishName !== 'string'
+      || !surah.englishName.trim()
+      || typeof surah.revelationType !== 'string'
+    ) {
+      throw new Error('invalid Quran catalog order or metadata');
+    }
+  });
+  return list as Surah[];
 }
 async function fetchSurah(number: string): Promise<{ surah: Surah; ayahs: Ayah[] }> {
-  const response = await fetch(`https://api.alquran.cloud/v1/surah/${number}/quran-uthmani`);
+  const numericNumber = Number(number);
+  if (!Number.isInteger(numericNumber) || numericNumber < 1 || numericNumber > 114) throw new Error('invalid surah number');
+  const response = await fetch(`https://api.alquran.cloud/v1/surah/${numericNumber}/quran-uthmani`);
   if (!response.ok) throw new Error();
   const json = await response.json();
-  return { surah: json.data, ayahs: json.data.ayahs };
+  const surah = json.data as Surah & { ayahs?: Ayah[] };
+  if (
+    !surah
+    || surah.number !== numericNumber
+    || !Array.isArray(surah.ayahs)
+    || surah.ayahs.length !== surah.numberOfAyahs
+    || surah.ayahs.some((ayah, index) => ayah.numberInSurah !== index + 1 || typeof ayah.text !== 'string' || !ayah.text.trim())
+  ) {
+    throw new Error('invalid Quran surah data');
+  }
+  return { surah, ayahs: surah.ayahs };
 }
 function QuranPage() {
   const { favorites, setFavorites, lastRead } = useApp();
@@ -344,10 +456,9 @@ function QuranReader() {
   useEffect(() => { if (id) setLastRead((current) => ({ surah: Number(id), ayah: current?.surah === Number(id) ? current.ayah : 1 })); }, [id]);
   const toggleBookmark = (ayah: number) => { const key = `${id}:${ayah}`; setBookmarks((current) => current.includes(key) ? current.filter((item) => item !== key) : [...current, key]); };
   return <PageFrame title={data?.surah.name ?? 'سورة'} back>
-    <main className="px-5">
-       <div className="mb-5 flex items-center justify-between rounded-2xl border border-border bg-card px-3 py-2"><div><p className="font-arabic text-xl">{data?.surah.name ?? 'جاري التحميل'}</p><p className="text-[11px] text-muted-foreground">{data ? `${data.surah.numberOfAyahs} آية · ${data.surah.revelationType === 'Meccan' ? 'مكية' : 'مدنية'}` : '...'}</p></div><div className="flex items-center gap-1"><button disabled={!RECITATION.enabled} data-testid="button-recitation" aria-label="التلاوة الصوتية قريباً" title={RECITATION.enabled ? `القارئ: ${RECITATION.defaultReciter}` : 'التلاوة الصوتية قريباً'} className="grid h-10 w-10 place-items-center rounded-xl bg-secondary text-muted-foreground disabled:cursor-not-allowed disabled:opacity-50"><Volume2 size={16} /></button><button onClick={() => setSettings((s) => ({ ...s, fontSize: Math.max(23, s.fontSize - 2) }))} data-testid="button-font-decrease" aria-label="تصغير الخط" className="grid h-10 w-10 place-items-center rounded-xl bg-secondary"><Minus size={16} /></button><span className="w-8 text-center text-xs font-bold">{settings.fontSize}</span><button onClick={() => setSettings((s) => ({ ...s, fontSize: Math.min(42, s.fontSize + 2) }))} data-testid="button-font-increase" aria-label="تكبير الخط" className="grid h-10 w-10 place-items-center rounded-xl bg-secondary"><Plus size={16} /></button></div></div>
-       <div className="mb-5 flex items-center justify-between rounded-2xl border border-border bg-card px-3 py-2"><div><p className="font-arabic text-xl">{data?.surah.name ?? 'جاري التحميل'}</p><p className="text-[11px] text-muted-foreground">{data ? `${data.surah.numberOfAyahs} آية · ${data.surah.revelationType === 'Meccan' ? 'مكية' : 'مدنية'}` : '...'}</p></div><div className="flex items-center gap-1"><button disabled={!RECITATION.enabled} data-testid="button-recitation" aria-label="التلاوة الصوتية قريباً" title={RECITATION.enabled ? `القارئ: ${RECITATION.defaultReciter}` : 'التلاوة الصوتية قريباً'} className="grid h-10 w-10 place-items-center rounded-xl bg-secondary text-muted-foreground disabled:cursor-not-allowed disabled:opacity-50"><Volume2 size={16} /></button><button onClick={() => setSettings((s) => ({ ...s, fontSize: Math.max(23, s.fontSize - 2) }))} data-testid="button-font-decrease" aria-label="تصغير الخط" className="grid h-10 w-10 place-items-center rounded-xl bg-secondary"><Minus size={16} /></button><span className="w-8 text-center text-xs font-bold">{settings.fontSize}</span><button onClick={() => setSettings((s) => ({ ...s, fontSize: Math.min(42, s.fontSize + 2) }))} data-testid="button-font-increase" aria-label="تكبير الخط" className="grid h-10 w-10 place-items-center rounded-xl bg-secondary"><Plus size={16} /></button></div></div>
-      {status === 'error' ? <FriendlyError onRetry={load} message="تعذّر فتح السورة" /> : status === 'loading' ? <div className="space-y-4">{[1, 2, 3].map((x) => <Skeleton key={x} className="h-36" />)}</div> : <><div className="mb-6 text-center"><div className="mx-auto mb-3 h-px w-20 bg-accent" /><p className="font-arabic text-3xl">{data?.surah.name}</p><p className="mt-1 text-xs text-muted-foreground">بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ</p></div><div className="divide-y divide-border/80">{data?.ayahs.map((ayah) => { const key = `${id}:${ayah.numberInSurah}`; const marked = bookmarks.includes(key); return <article key={ayah.number} onClick={() => setLastRead({ surah: Number(id), ayah: ayah.numberInSurah })} data-testid={`article-ayah-${ayah.numberInSurah}`} className="group relative py-6"><p dir="rtl" className="font-arabic text-foreground leading-[2.15] transition-colors" style={{ fontSize: settings.fontSize }}>{ayah.text} <span className="mx-1 inline-grid h-8 w-8 translate-y-1 place-items-center rounded-full border border-accent/60 align-middle font-sans text-xs text-accent">{ayah.numberInSurah}</span></p><button onClick={() => toggleBookmark(ayah.numberInSurah)} data-testid={`button-bookmark-ayah-${ayah.numberInSurah}`} aria-label={`حفظ الآية ${ayah.numberInSurah}`} className={`mt-3 flex min-h-9 items-center gap-2 rounded-lg px-2 text-[11px] transition-opacity ${marked ? 'text-accent' : 'text-muted-foreground opacity-60 md:opacity-0 md:group-hover:opacity-100'}`}><Bookmark size={14} fill={marked ? 'currentColor' : 'none'} /> {marked ? 'محفوظة' : 'حفظ الآية'}</button></article>; })}</div></>}
+       <main className="px-5">
+        <div className="mb-5 flex items-center justify-between rounded-2xl border border-border bg-card px-3 py-2"><div><p className="font-arabic text-xl">{data?.surah.name ?? 'جاري التحميل'}</p><p className="text-[11px] text-muted-foreground">{data ? `${data.surah.numberOfAyahs} آية · ${data.surah.revelationType === 'Meccan' ? 'مكية' : 'مدنية'}` : '...'}</p></div><div className="flex items-center gap-1"><span data-testid="status-recitation" aria-label="التلاوة الصوتية غير متاحة حالياً" title={`التلاوة الصوتية قريباً · القارئ المقترح: ${RECITATION.defaultReciter}`} className="flex h-10 items-center gap-1 rounded-xl bg-secondary px-2 text-[10px] text-muted-foreground opacity-60"><Volume2 size={15} /><span>قريباً</span></span><button onClick={() => setSettings((s) => ({ ...s, fontSize: Math.max(23, s.fontSize - 2) }))} data-testid="button-font-decrease" aria-label="تصغير الخط" className="grid h-10 w-10 place-items-center rounded-xl bg-secondary"><Minus size={16} /></button><span className="w-8 text-center text-xs font-bold">{settings.fontSize}</span><button onClick={() => setSettings((s) => ({ ...s, fontSize: Math.min(42, s.fontSize + 2) }))} data-testid="button-font-increase" aria-label="تكبير الخط" className="grid h-10 w-10 place-items-center rounded-xl bg-secondary"><Plus size={16} /></button></div></div>
+       {status === 'error' ? <FriendlyError onRetry={load} message="تعذّر فتح السورة أو التحقق من آياتها" /> : status === 'loading' ? <div className="space-y-4">{[1, 2, 3].map((x) => <Skeleton key={x} className="h-36" />)}</div> : <><div className="mb-6 text-center"><div className="mx-auto mb-3 h-px w-20 bg-accent" /><p className="font-arabic text-3xl">{data?.surah.name}</p>{data && data.surah.number !== 9 && !BASMALA_PATTERN.test(data.ayahs[0]?.text ?? '') && <p className="mt-1 text-xs text-muted-foreground">بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ</p>}</div><div className="divide-y divide-border/80">{data?.ayahs.map((ayah) => { const key = `${id}:${ayah.numberInSurah}`; const marked = bookmarks.includes(key); return <article key={ayah.number} onClick={() => setLastRead({ surah: Number(id), ayah: ayah.numberInSurah })} data-testid={`article-ayah-${ayah.numberInSurah}`} className="group relative py-6"><p dir="rtl" className="font-arabic text-foreground leading-[2.15] transition-colors" style={{ fontSize: settings.fontSize }}>{ayah.text} <span className="mx-1 inline-grid h-8 w-8 translate-y-1 place-items-center rounded-full border border-accent/60 align-middle font-sans text-xs text-accent">{ayah.numberInSurah}</span></p><button onClick={() => toggleBookmark(ayah.numberInSurah)} data-testid={`button-bookmark-ayah-${ayah.numberInSurah}`} aria-label={`حفظ الآية ${ayah.numberInSurah}`} className={`mt-3 flex min-h-9 items-center gap-2 rounded-lg px-2 text-[11px] transition-opacity ${marked ? 'text-accent' : 'text-muted-foreground opacity-60 md:opacity-100'}`}><Bookmark size={14} fill={marked ? 'currentColor' : 'none'} /> {marked ? 'محفوظة' : 'حفظ الآية'}</button></article>; })}</div></>}
     </main>
   </PageFrame>;
 }
@@ -355,25 +466,42 @@ function QuranReader() {
 function QiblaPage() {
   const { coords, locationState, refreshLocation } = useApp();
   const [heading, setHeading] = useState<number | null>(null);
-  const [sensorEnabled, setSensorEnabled] = useState(false);
+  const [sensorStatus, setSensorStatus] = useState<'idle' | 'enabled' | 'denied' | 'unsupported'>('idle');
   const bearing = qiblaBearing(coords);
   useEffect(() => {
-    const listener = (event: DeviceOrientationEvent) => { const alpha = event.alpha; if (alpha !== null) setHeading(alpha); };
+    const listener = (event: DeviceOrientationEvent & { webkitCompassHeading?: number }) => {
+      const compassHeading = typeof event.webkitCompassHeading === 'number' ? event.webkitCompassHeading : event.alpha;
+      if (compassHeading !== null && Number.isFinite(compassHeading)) setHeading((compassHeading + 360) % 360);
+    };
     window.addEventListener('deviceorientationabsolute', listener as EventListener);
     window.addEventListener('deviceorientation', listener as EventListener);
     return () => { window.removeEventListener('deviceorientationabsolute', listener as EventListener); window.removeEventListener('deviceorientation', listener as EventListener); };
   }, []);
   const enableSensor = async () => {
-    const orientation = DeviceOrientationEvent as typeof DeviceOrientationEvent & { requestPermission?: () => Promise<string> };
-    if (orientation.requestPermission) { const result = await orientation.requestPermission(); if (result !== 'granted') return; }
-    setSensorEnabled(true);
+    if (typeof DeviceOrientationEvent === 'undefined') {
+      setSensorStatus('unsupported');
+      return;
+    }
+    try {
+      const orientation = DeviceOrientationEvent as typeof DeviceOrientationEvent & { requestPermission?: () => Promise<string> };
+      if (orientation.requestPermission) {
+        const result = await orientation.requestPermission();
+        if (result !== 'granted') {
+          setSensorStatus('denied');
+          return;
+        }
+      }
+      setSensorStatus('enabled');
+    } catch {
+      setSensorStatus('denied');
+    }
   };
-  const displayAngle = heading === null || !sensorEnabled ? bearing : (bearing - heading + 360) % 360;
+  const displayAngle = heading === null || sensorStatus !== 'enabled' ? bearing : (bearing - heading + 360) % 360;
   return <PageFrame title="القبلة">
     <main className="space-y-5 px-5">
       <section className="rounded-[1.7rem] bg-primary p-6 text-center text-primary-foreground"><p className="text-xs text-primary-foreground/70">اتجاه مكة المكرمة من موقعك</p><div className="relative mx-auto my-6 grid h-56 w-56 place-items-center rounded-full border border-primary-foreground/20 pattern-star"><div className="absolute inset-4 rounded-full border border-primary-foreground/10" /><div className="absolute inset-0 transition-transform duration-500" style={{ transform: `rotate(${displayAngle}deg)` }}><div className="absolute left-1/2 top-3 -translate-x-1/2 text-accent"><Navigation size={28} fill="currentColor" /></div><div className="absolute left-1/2 top-1/2 h-[38%] w-px -translate-x-1/2 -translate-y-1/2 bg-accent/60" /></div><div className="relative grid h-16 w-16 place-items-center rounded-full bg-accent text-accent-foreground"><span className="font-arabic text-2xl">قبلة</span></div></div><p className="font-mono text-3xl font-bold">{Math.round(bearing)}°</p><p className="mt-1 text-xs text-primary-foreground/65">زاوية القبلة من الشمال الحقيقي</p></section>
-      <div className="grid grid-cols-2 gap-3"><div className="rounded-2xl border border-border bg-card p-4"><MapPin className="mb-3 text-accent" size={20} /><p className="text-xs text-muted-foreground">إحداثياتك</p><p className="mt-1 font-mono text-xs">{coords.latitude.toFixed(3)}° ، {coords.longitude.toFixed(3)}°</p></div><div className="rounded-2xl border border-border bg-card p-4"><Compass className="mb-3 text-primary" size={20} /><p className="text-xs text-muted-foreground">البوصلة</p><p className="mt-1 text-xs font-bold">{sensorEnabled && heading !== null ? 'مفعّلة الآن' : 'وضع الزاوية'}</p></div></div>
-      <div className="rounded-2xl border border-border bg-card p-4"><div className="flex gap-3"><Info className="mt-0.5 shrink-0 text-accent" size={18} /><div><p className="text-sm font-bold">لنتيجة أدق</p><p className="mt-1 text-xs leading-6 text-muted-foreground">أبعد الهاتف عن المعادن، ثم حرّكه في شكل رقم ٨ لمعايرة البوصلة. إن لم يدعم جهازك المستشعر، استخدم زاوية القبلة الظاهرة.</p></div></div><div className="mt-4 flex gap-2"><button onClick={enableSensor} data-testid="button-enable-compass" className="flex min-h-11 flex-1 items-center justify-center gap-2 rounded-xl bg-primary text-xs font-bold text-primary-foreground"><Compass size={16} /> تفعيل البوصلة</button><button onClick={refreshLocation} data-testid="button-refresh-location-qibla" className="grid min-h-11 w-12 place-items-center rounded-xl bg-secondary" aria-label="تحديث الموقع"><LocateFixed size={17} /></button></div></div>
+      <div className="grid grid-cols-2 gap-3"><div className="rounded-2xl border border-border bg-card p-4"><MapPin className="mb-3 text-accent" size={20} /><p className="text-xs text-muted-foreground">إحداثياتك</p><p className="mt-1 font-mono text-xs">{coords.latitude.toFixed(3)}° ، {coords.longitude.toFixed(3)}°</p></div><div className="rounded-2xl border border-border bg-card p-4"><Compass className="mb-3 text-primary" size={20} /><p className="text-xs text-muted-foreground">البوصلة</p><p className="mt-1 text-xs font-bold">{sensorStatus === 'enabled' && heading !== null ? 'مفعّلة الآن' : sensorStatus === 'unsupported' ? 'غير مدعومة' : 'وضع الزاوية'}</p></div></div>
+      <div className="rounded-2xl border border-border bg-card p-4"><div className="flex gap-3"><Info className="mt-0.5 shrink-0 text-accent" size={18} /><div><p className="text-sm font-bold">لنتيجة أدق</p><p className="mt-1 text-xs leading-6 text-muted-foreground">أبعد الهاتف عن المعادن، ثم حرّكه في شكل رقم ٨ لمعايرة البوصلة. إن لم يدعم جهازك المستشعر، استخدم زاوية القبلة الظاهرة.</p></div></div><div className="mt-4 flex gap-2"><button onClick={enableSensor} disabled={sensorStatus === 'enabled'} data-testid="button-enable-compass" className="flex min-h-11 flex-1 items-center justify-center gap-2 rounded-xl bg-primary text-xs font-bold text-primary-foreground disabled:opacity-60"><Compass size={16} /> {sensorStatus === 'enabled' ? 'البوصلة مفعّلة' : 'تفعيل البوصلة'}</button><button onClick={refreshLocation} data-testid="button-refresh-location-qibla" className="grid min-h-11 w-12 place-items-center rounded-xl bg-secondary" aria-label="تحديث الموقع"><LocateFixed size={17} /></button></div>{sensorStatus === 'denied' && <p className="mt-3 text-xs text-destructive">لم يُسمح بمستشعر الاتجاه. استخدم زاوية القبلة الظاهرة أو فعّل الإذن من إعدادات المتصفح.</p>}{sensorStatus === 'unsupported' && <p className="mt-3 text-xs text-muted-foreground">هذا الجهاز لا يدعم مستشعر الاتجاه؛ زاوية القبلة الظاهرة أدناه هي البديل الصحيح.</p>}</div>
       {locationState === 'error' && <FriendlyError onRetry={refreshLocation} message="نحتاج إلى موقعك لحساب القبلة" />}
     </main>
   </PageFrame>;
@@ -383,7 +511,7 @@ function AdhkarPage() {
   const [tab, setTab] = useState<keyof typeof adhkarSets>('morning');
   const [progress, setProgress] = useLocalState<Record<string, number[]>>('mushaf-adhkar-progress', {});
   const current = adhkarSets[tab];
-  const counts = progress[tab] ?? current.items.map(() => 0);
+  const counts = current.items.map((item, index) => clampProgress(progress[tab]?.[index], item.count));
   const total = current.items.reduce((sum, item) => sum + item.count, 0);
   const complete = counts.reduce((sum, count) => sum + count, 0);
   const increment = (index: number) => setProgress((all) => ({ ...all, [tab]: counts.map((count, itemIndex) => itemIndex === index ? Math.min(current.items[itemIndex].count, count + 1) : count) }));
@@ -392,7 +520,7 @@ function AdhkarPage() {
     <main className="space-y-5 px-5">
       <section className="rounded-[1.7rem] bg-secondary p-5"><div className="flex items-start justify-between"><div><p className="text-xs font-bold tracking-[.16em] text-accent">ورد اليوم</p><h2 className="mt-2 text-2xl font-extrabold">{current.title}</h2><p className="mt-1 text-xs text-muted-foreground">{current.subtitle}</p></div><div className="grid h-14 w-14 place-items-center rounded-full border-4 border-accent/30 text-center"><span className="text-sm font-bold">{Math.round(total ? complete / total * 100 : 0)}%</span></div></div><div className="mt-5 h-2 overflow-hidden rounded-full bg-background"><div className="h-full rounded-full bg-accent transition-all duration-300" style={{ width: `${total ? complete / total * 100 : 0}%` }} /></div><div className="mt-2 flex justify-between text-[11px] text-muted-foreground"><span>{complete} من {total}</span><button onClick={reset} data-testid="button-reset-adhkar" className="font-bold text-primary">إعادة التعيين</button></div></section>
       <div className="grid grid-cols-3 gap-2 rounded-2xl bg-muted p-1">{Object.entries(adhkarSets).map(([key, set]) => <button key={key} onClick={() => setTab(key as keyof typeof adhkarSets)} data-testid={`button-adhkar-tab-${key}`} className={`min-h-11 rounded-xl text-xs font-bold transition-colors ${tab === key ? 'bg-card text-primary soft-shadow' : 'text-muted-foreground'}`}>{set.title.replace('أذكار', '')}</button>)}</div>
-      <div className="space-y-3">{current.items.map((item, index) => { const done = counts[index] >= item.count; return <button key={`${tab}-${index}`} onClick={() => increment(index)} disabled={done} data-testid={`button-adhkar-item-${index}`} className={`w-full rounded-2xl border p-5 text-right transition-all active:scale-[.99] ${done ? 'border-accent/30 bg-accent/5' : 'border-border bg-card hover:border-accent/50'}`}><div className="mb-4 flex items-center justify-between"><span className={`grid h-8 w-8 place-items-center rounded-full ${done ? 'bg-accent text-accent-foreground' : 'bg-secondary text-muted-foreground'}`}>{done ? <Check size={16} /> : <span className="text-xs font-bold">{index + 1}</span>}</span><span className="flex items-center gap-1 text-xs text-muted-foreground">{counts[index]} / {item.count} <span className="mr-1 h-1.5 w-1.5 rounded-full bg-accent" /></span></div><p className={`font-arabic text-xl leading-[2] ${done ? 'text-muted-foreground line-through decoration-accent/50' : ''}`}>{item.text}</p><p className="mt-3 text-[11px] font-bold text-accent">{done ? 'تم الذكر' : 'اضغط للتسبيح'}</p></button>; })}</div>
+       <div className="space-y-3">{current.items.map((item, index) => { const done = counts[index] >= item.count; return <button key={`${tab}-${index}`} onClick={() => increment(index)} disabled={done} data-testid={`button-adhkar-item-${index}`} aria-label={`${item.text} · ${counts[index]} من ${item.count}`} className={`w-full rounded-2xl border p-5 text-right transition-all active:scale-[.99] ${done ? 'border-accent/30 bg-accent/5' : 'border-border bg-card hover:border-accent/50'}`}><div className="mb-4 flex items-center justify-between"><span className={`grid h-8 w-8 place-items-center rounded-full ${done ? 'bg-accent text-accent-foreground' : 'bg-secondary text-muted-foreground'}`}>{done ? <Check size={16} /> : <span className="text-xs font-bold">{index + 1}</span>}</span><span dir="ltr" className="flex items-center gap-1 text-xs text-muted-foreground">{counts[index]} / {item.count} <span className="mr-1 h-1.5 w-1.5 rounded-full bg-accent" /></span></div><p className={`font-arabic text-xl leading-[2] ${done ? 'text-muted-foreground line-through decoration-accent/50' : ''}`}>{item.text}</p><p className="mt-3 text-[11px] font-bold text-accent">{done ? `اكتمل الذكر · ${item.count} مرات` : 'اضغط للتسبيح'}</p></button>; })}</div>
     </main>
   </PageFrame>;
 }
@@ -401,19 +529,38 @@ function Toggle({ checked, onChange, label }: { checked: boolean; onChange: () =
   return <button onClick={onChange} data-testid={`button-toggle-${label}`} role="switch" aria-checked={checked} aria-label={label} className={`relative h-7 w-12 rounded-full p-1 transition-colors ${checked ? 'bg-primary' : 'bg-muted'}`}><span className={`block h-5 w-5 rounded-full bg-card transition-transform ${checked ? '-translate-x-5' : 'translate-x-0'}`} /></button>;
 }
 function SettingsPage() {
-  const { settings, setSettings, refreshLocation, locationName, locationState } = useApp();
+  const { settings, setSettings, refreshLocation, locationName, locationSource, locationState, findManualLocation, manualLocationState } = useApp();
   const [installed, setInstalled] = useState(false);
   const [installEvent, setInstallEvent] = useState<Event | null>(null);
+  const [manualCity, setManualCity] = useLocalState('mushaf-manual-city', '');
   useEffect(() => { const handler = (event: Event) => { event.preventDefault(); setInstallEvent(event); }; window.addEventListener('beforeinstallprompt', handler); return () => window.removeEventListener('beforeinstallprompt', handler); }, []);
   const install = async () => { const prompt = installEvent as (Event & { prompt?: () => Promise<void> }) | null; if (prompt?.prompt) { await prompt.prompt(); setInstalled(true); } };
   return <PageFrame title="الإعدادات">
     <main className="space-y-5 px-5">
       <section className="rounded-[1.7rem] bg-primary p-5 text-primary-foreground"><p className="text-xs text-primary-foreground/65">مساحتك، بطريقتك</p><h2 className="mt-2 text-2xl font-extrabold">إعدادات المصحف والصلاة</h2><p className="mt-2 text-xs leading-6 text-primary-foreground/70">تُحفظ تفضيلاتك على هذا الجهاز فقط، لتبقى تجربتك شخصية وسريعة.</p></section>
       <section><SectionHeading eyebrow="المظهر" title="راحة العين" /><div className="overflow-hidden rounded-2xl border border-border bg-card"><div className="flex items-center justify-between border-b border-border p-4"><div className="flex items-center gap-3"><span className="grid h-9 w-9 place-items-center rounded-xl bg-secondary">{settings.theme === 'dark' ? <Moon size={17} /> : <Sun size={17} />}</span><div><p className="text-sm font-bold">الوضع الداكن</p><p className="text-[11px] text-muted-foreground">ألوان أهدأ في الليل</p></div></div><Toggle checked={settings.theme === 'dark'} label="الوضع الداكن" onChange={() => setSettings((s) => ({ ...s, theme: s.theme === 'dark' ? 'light' : 'dark' }))} /></div><div className="p-4"><div className="mb-3 flex items-center justify-between"><div><p className="text-sm font-bold">حجم خط القرآن</p><p className="text-[11px] text-muted-foreground">اضبط القراءة كما تحب</p></div><span className="font-mono text-xs">{settings.fontSize}px</span></div><input type="range" min="23" max="42" step="1" value={settings.fontSize} onChange={(event) => setSettings((s) => ({ ...s, fontSize: Number(event.target.value) }))} data-testid="input-quran-font-size" aria-label="حجم خط القرآن" className="w-full accent-[hsl(var(--primary))]" /></div></div></section>
-      <section><SectionHeading eyebrow="الصلاة" title="المواقيت والموقع" /><div className="overflow-hidden rounded-2xl border border-border bg-card"><div className="flex items-center justify-between border-b border-border p-4"><div><p className="text-sm font-bold">طريقة الحساب</p><p className="mt-1 text-[11px] text-muted-foreground">تؤثر على مواقيت الفجر والعشاء</p></div><select value={settings.method} onChange={(event) => setSettings((s) => ({ ...s, method: event.target.value }))} data-testid="select-prayer-method" className="max-w-[165px] rounded-xl border border-border bg-secondary px-2 py-2 text-xs outline-none">{METHODS.map((method) => <option key={method.value} value={method.value}>{method.label}</option>)}</select></div><div className="flex items-center justify-between p-4"><div className="flex items-center gap-3"><MapPin size={18} className="text-accent" /><div><p className="text-sm font-bold">الموقع الحالي</p><p className="mt-1 text-[11px] text-muted-foreground">{locationName}</p></div></div><button onClick={refreshLocation} disabled={locationState === 'loading'} data-testid="button-refresh-location-settings" className="flex min-h-10 items-center gap-1 rounded-xl bg-secondary px-3 text-xs font-bold">{locationState === 'loading' ? <RefreshCw size={14} className="animate-spin" /> : <LocateFixed size={14} />} تحديث</button></div></div></section>
+       <section><SectionHeading eyebrow="الصلاة" title="المواقيت والموقع" /><div className="overflow-hidden rounded-2xl border border-border bg-card"><div className="flex items-center justify-between border-b border-border p-4"><div><p className="text-sm font-bold">طريقة الحساب</p><p className="mt-1 text-[11px] text-muted-foreground">تؤثر على مواقيت الفجر والعشاء</p></div><select value={settings.method} onChange={(event) => setSettings((s) => ({ ...s, method: event.target.value }))} data-testid="select-prayer-method" className="max-w-[165px] rounded-xl border border-border bg-secondary px-2 py-2 text-xs outline-none">{METHODS.map((method) => <option key={method.value} value={method.value}>{method.label}</option>)}</select></div><div className="flex items-center justify-between p-4"><div className="flex min-w-0 items-center gap-3"><MapPin size={18} className="shrink-0 text-accent" /><div className="min-w-0"><p className="text-sm font-bold">{locationSource === 'default' ? 'الموقع الافتراضي' : 'الموقع المستخدم'}</p><p className="mt-1 truncate text-[11px] text-muted-foreground">{locationName}</p></div></div><button onClick={refreshLocation} disabled={locationState === 'loading'} data-testid="button-refresh-location-settings" className="flex min-h-10 shrink-0 items-center gap-1 rounded-xl bg-secondary px-3 text-xs font-bold">{locationState === 'loading' ? <RefreshCw size={14} className="animate-spin" /> : <LocateFixed size={14} />} استخدام موقعي</button></div><div className="border-t border-border p-4"><p className="text-xs leading-5 text-muted-foreground">{locationSource === 'default' ? 'لم يتم اعتماد موقع الهاتف بعد. يمكنك السماح بالوصول للموقع أو اختيار مدينة يدوياً.' : 'تُستخدم الإحداثيات الحالية لحساب المواقيت واتجاه القبلة.'}</p><form onSubmit={(event) => { event.preventDefault(); void findManualLocation(manualCity); }} className="mt-3 flex gap-2"><input value={manualCity} onChange={(event) => setManualCity(event.target.value)} data-testid="input-manual-city" aria-label="اختيار مدينة يدوياً" placeholder="اكتب اسم المدينة والدولة" className="min-w-0 flex-1 rounded-xl border border-border bg-background px-3 text-xs outline-none focus:ring-2 focus:ring-accent/40" /><button type="submit" disabled={manualLocationState === 'loading' || !manualCity.trim()} data-testid="button-manual-city" className="flex min-h-10 shrink-0 items-center gap-1 rounded-xl bg-secondary px-3 text-xs font-bold disabled:opacity-50">{manualLocationState === 'loading' ? <RefreshCw size={14} className="animate-spin" /> : <MapPin size={14} />} اختيار</button></form>{manualLocationState === 'error' && <p className="mt-2 text-xs text-destructive">لم نعثر على المدينة. اكتب الاسم مع الدولة وحاول مرة أخرى.</p>}</div></div></section>
       <section><SectionHeading eyebrow="التنبيهات" title="التذكير" /><div className="flex items-center justify-between rounded-2xl border border-border bg-card p-4"><div className="flex items-center gap-3"><span className="grid h-9 w-9 place-items-center rounded-xl bg-accent/15 text-accent"><Bell size={17} /></span><div><p className="text-sm font-bold">تنبيهات الصلاة</p><p className="mt-1 text-[11px] text-muted-foreground">تفعيل الإشعارات عند دعم المتصفح</p></div></div><Toggle checked={settings.notifications} label="تنبيهات الصلاة" onChange={() => setSettings((s) => ({ ...s, notifications: !s.notifications }))} /></div></section>
-      <section className="rounded-2xl border border-dashed border-accent/50 bg-accent/5 p-4"><div className="flex gap-3"><Download className="mt-0.5 shrink-0 text-accent" size={19} /><div className="flex-1"><p className="text-sm font-bold">ثبّت التطبيق على جهازك</p><p className="mt-1 text-xs leading-6 text-muted-foreground">افتح المصحف والصلاة بسرعة من الشاشة الرئيسية، ويعمل معك حتى عند ضعف الاتصال.</p>{installEvent && !installed ? <button onClick={install} data-testid="button-install-app" className="mt-3 min-h-10 rounded-xl bg-primary px-4 text-xs font-bold text-primary-foreground">تثبيت التطبيق</button> : <p className="mt-3 text-xs font-bold text-primary">{installed ? 'تم إرسال طلب التثبيت' : 'من قائمة المتصفح اختر «إضافة إلى الشاشة الرئيسية»'}</p>}</div></div></section>
-      <div className="flex items-center justify-center gap-2 pb-4 text-[11px] text-muted-foreground"><SlidersHorizontal size={14} /> المصحف والصلاة · إصدار ١.٠</div>
+       <section className="rounded-2xl border border-dashed border-accent/50 bg-accent/5 p-4"><div className="flex gap-3"><Download className="mt-0.5 shrink-0 text-accent" size={19} /><div className="flex-1"><p className="text-sm font-bold">ثبّت التطبيق على جهازك</p><p className="mt-1 text-xs leading-6 text-muted-foreground">افتح المصحف والصلاة بسرعة من الشاشة الرئيسية، ويعمل معك حتى عند ضعف الاتصال.</p>{installEvent && !installed ? <button onClick={install} data-testid="button-install-app" className="mt-3 min-h-10 rounded-xl bg-primary px-4 text-xs font-bold text-primary-foreground">تثبيت التطبيق</button> : <p className="mt-3 text-xs font-bold text-primary">{installed ? 'تم إرسال طلب التثبيت' : 'من قائمة المتصفح اختر «إضافة إلى الشاشة الرئيسية»'}</p>}</div></div></section>
+       <section className="rounded-2xl border border-border bg-card p-4"><div className="flex items-center justify-between gap-3"><div><p className="text-sm font-bold">حول التطبيق</p><p className="mt-1 text-[11px] text-muted-foreground">المصدر، الخصوصية، وبيانات التطوير</p></div><Link href="/about" data-testid="link-about" className="flex min-h-10 items-center gap-2 rounded-xl bg-secondary px-3 text-xs font-bold"><Info size={15} /> عرض</Link></div></section>
+       <div className="flex flex-col items-center justify-center gap-1 pb-4 text-[11px] text-muted-foreground"><div className="flex items-center gap-2"><SlidersHorizontal size={14} /> المصحف والصلاة · إصدار ١.٠</div><span>تطوير وتصميم: Hicham Jandali</span></div>
+    </main>
+  </PageFrame>;
+}
+
+function AboutPage() {
+  return <PageFrame title="حول التطبيق" back>
+    <main className="space-y-5 px-5">
+      <section className="rounded-[1.7rem] bg-primary p-6 text-center text-primary-foreground">
+        <div className="mx-auto grid h-16 w-16 place-items-center rounded-2xl bg-accent text-accent-foreground"><span className="font-arabic text-3xl">م</span></div>
+        <p className="mt-4 text-xs text-primary-foreground/65">مساحة هادئة للعبادة اليومية</p>
+        <h2 className="mt-1 text-2xl font-extrabold">المصحف والصلاة</h2>
+        <p className="mt-3 text-xs leading-6 text-primary-foreground/75">قرآن موثوق، مواقيت حسب موقعك، قبلة، وأذكار في تجربة عربية مصممة للهاتف.</p>
+      </section>
+      <section className="rounded-2xl border border-border bg-card p-5">
+        <div className="flex items-start gap-3"><Info className="mt-0.5 shrink-0 text-accent" size={20} /><div><p className="text-sm font-bold">تطوير وتصميم</p><p className="mt-1 text-lg font-extrabold">Hicham Jandali</p><p className="mt-3 text-xs leading-6 text-muted-foreground">بيانات القرآن من AlQuran Cloud، ومواقيت الصلاة من AlAdhan. يحفظ التطبيق تفضيلاتك محلياً ولا يحتاج إلى إنشاء حساب.</p></div></div>
+      </section>
+      <Link href="/settings" data-testid="link-about-settings" className="flex min-h-12 items-center justify-center rounded-xl bg-secondary text-sm font-bold">العودة إلى الإعدادات</Link>
     </main>
   </PageFrame>;
 }
@@ -423,7 +570,7 @@ function NotFoundPage() {
 }
 
 function Router() {
-  return <Switch><Route path="/" component={HomePage} /><Route path="/quran" component={QuranPage} /><Route path="/quran/:id" component={QuranReader} /><Route path="/qibla" component={QiblaPage} /><Route path="/adhkar" component={AdhkarPage} /><Route path="/settings" component={SettingsPage} /><Route component={NotFoundPage} /></Switch>;
+  return <Switch><Route path="/" component={HomePage} /><Route path="/quran" component={QuranPage} /><Route path="/quran/:id" component={QuranReader} /><Route path="/qibla" component={QiblaPage} /><Route path="/adhkar" component={AdhkarPage} /><Route path="/settings" component={SettingsPage} /><Route path="/about" component={AboutPage} /><Route component={NotFoundPage} /></Switch>;
 }
 function App() {
   return <AppShell><WouterRouter base={import.meta.env.BASE_URL.replace(/\/$/, '')}><Router /></WouterRouter></AppShell>;
