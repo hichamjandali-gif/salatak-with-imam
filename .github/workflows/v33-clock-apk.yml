@@ -1,0 +1,59 @@
+name: V33 Clock-style prayer Android APK
+on:
+  push:
+    branches: [build/v33-clock-style-app-20261025]
+    paths: ['android-adhan-v28/**','artifacts/mushaf-prayer/**','.github/workflows/v33-clock-apk.yml']
+  workflow_dispatch:
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: '10'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Compile the local web user interface
+        env:
+          PORT: '5173'
+          BASE_PATH: '/assets/'
+          NODE_ENV: production
+        run: pnpm --filter @workspace/mushaf-prayer build
+      - name: Embed web files in Android assets
+        run: |
+          mkdir -p android-adhan-v28/app/src/main/assets
+          cp -a artifacts/mushaf-prayer/dist/public/. android-adhan-v28/app/src/main/assets/
+          test -s android-adhan-v28/app/src/main/assets/index.html
+          grep -q '/assets/assets/' android-adhan-v28/app/src/main/assets/index.html
+          ! grep -Riq 'Powered by Netlify\|Build your own site with Netlify' android-adhan-v28/app/src/main/assets/
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v4
+        with:
+          packages: 'platform-tools platforms;android-35 build-tools;35.0.0'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.10.2'
+      - name: Generate green icon and download adhan audio
+        run: |
+          python -m pip install cairosvg
+          mkdir -p android-adhan-v28/app/src/main/res/drawable android-adhan-v28/app/src/main/res/raw
+          python -c "import cairosvg; cairosvg.svg2png(url='artifacts/mushaf-prayer/public/favicon.svg',write_to='android-adhan-v28/app/src/main/res/drawable/icon_green.png',output_width=192,output_height=192)"
+          curl -fL --retry 3 "https://relaxed-kitsune-ff167d.netlify.app/prayer-audio/adhan.mp3" -o android-adhan-v28/app/src/main/res/raw/adhan.mp3
+          curl -fL --retry 3 "https://relaxed-kitsune-ff167d.netlify.app/prayer-audio/adhan_fajr.mp3" -o android-adhan-v28/app/src/main/res/raw/adhan_fajr.mp3
+      - name: Build APK
+        working-directory: android-adhan-v28
+        run: gradle :app:assembleDebug --no-daemon
+      - uses: actions/upload-artifact@v4
+        with:
+          name: salatak-v33-clock-style-apk
+          path: android-adhan-v28/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
