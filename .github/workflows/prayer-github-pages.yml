@@ -38,6 +38,8 @@ jobs:
           test -s artifacts/mushaf-prayer/dist/public/index.html
           if grep -RiqE 'Build your own site with Netlify|Powered by Netlify' artifacts/mushaf-prayer/dist/public; then exit 1; fi
       - uses: actions/configure-pages@v5
+        with:
+          enablement: true
       - uses: actions/upload-pages-artifact@v3
         with:
           path: artifacts/mushaf-prayer/dist/public
