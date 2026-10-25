@@ -32,6 +32,7 @@ public class NativeApp extends Activity {
         return a!=null&&a.canScheduleExactAlarms();
     }
     WebView web; Switch toggle;TextView status; boolean silent=false;
+    GeolocationPermissions.Callback geoPending; String geoOrigin;
     void setToggle(boolean v){silent=true;toggle.setChecked(v);silent=false;}
     void showStatus(){status.setText(p(this).getString("status",enabled(this)?"الأذان مفعل":"الأذان متوقف"));}
     @Override public void onCreate(Bundle b){
@@ -44,7 +45,14 @@ public class NativeApp extends Activity {
         root.addView(head);web=new WebView(this);root.addView(web,new LinearLayout.LayoutParams(-1,0,1));setContentView(root);
         web.getSettings().setJavaScriptEnabled(true);web.getSettings().setDomStorageEnabled(true);
         web.setWebViewClient(new WebViewClient());
-        web.setWebChromeClient(new WebChromeClient());
+        web.setWebChromeClient(new WebChromeClient(){
+ @Override public void onGeolocationPermissionsShowPrompt(String origin, GeolocationPermissions.Callback callback){
+ if(Build.VERSION.SDK_INT>=23 && checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION)!=PackageManager.PERMISSION_GRANTED){
+ geoPending=callback;geoOrigin=origin;
+ requestPermissions(new String[]{Manifest.permission.ACCESS_FINE_LOCATION,Manifest.permission.ACCESS_COARSE_LOCATION},45);
+ } else callback.invoke(origin,true,false);
+ }
+ });
         web.loadUrl(URL);
         setToggle(enabled(this));showStatus();
         toggle.setOnCheckedChangeListener((v,checked)->{
@@ -104,6 +112,10 @@ public class NativeApp extends Activity {
     @Override public void onRequestPermissionsResult(int r,String[] perms,int[] grants){
         super.onRequestPermissionsResult(r,perms,grants);
         if(r==44 && grants.length>0 && grants[0]==PackageManager.PERMISSION_GRANTED)requestEnable();
+ if(r==45 && geoPending!=null){
+ boolean granted=false;for(int v:grants)if(v==PackageManager.PERMISSION_GRANTED)granted=true;
+ geoPending.invoke(geoOrigin,granted,false);geoPending=null;geoOrigin=null;
+ }
     }
     @Override public void onBackPressed(){if(web.canGoBack())web.goBack();else super.onBackPressed();}
     static PendingIntent pending(Context c,int id,String prayer,int flags){
