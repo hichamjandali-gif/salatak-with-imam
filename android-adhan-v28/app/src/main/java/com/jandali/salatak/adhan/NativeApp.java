@@ -41,10 +41,14 @@ public class NativeApp extends Activity {
         LinearLayout head=new LinearLayout(this);head.setOrientation(1);head.setPadding(16,6,16,6);head.setBackgroundColor(0xffebf5ef);
         toggle=new Switch(this);toggle.setText("الأذان التلقائي — تفعيل / إلغاء");toggle.setTextSize(17);
         head.addView(toggle);status=new TextView(this);status.setTextSize(12);head.addView(status);
-        Button test=new Button(this);test.setText("اختبر الأذان بعد 15 ثانية والشاشة مغلقة");head.addView(test);
+        head.setVisibility(View.GONE);
         root.addView(head);web=new WebView(this);root.addView(web,new LinearLayout.LayoutParams(-1,0,1));setContentView(root);
         web.getSettings().setJavaScriptEnabled(true);web.getSettings().setDomStorageEnabled(true);
-        web.setWebViewClient(new WebViewClient());
+        web.setWebViewClient(new WebViewClient(){
+            @Override public void onPageFinished(WebView view,String url){super.onPageFinished(view,url);
+                view.evaluateJavascript("(function(){if(window.__adhanSettingsObserver)return;function update(){var t=document.body?document.body.innerText:'';var isSettings=!!(document.querySelector('h1,h2')&&/إعدادات المصحف والصلاة/.test(t.slice(0,450)));window.AdhanSettingsVisibility.settingsVisible(isSettings)};var o=new MutationObserver(function(){clearTimeout(window.__adhanSettingsTimer);window.__adhanSettingsTimer=setTimeout(update,120)});o.observe(document.documentElement,{subtree:true,childList:true,characterData:true});window.__adhanSettingsObserver=o;update()})()",null);
+            }
+        });
         web.setWebChromeClient(new WebChromeClient(){
  @Override public void onGeolocationPermissionsShowPrompt(String origin, GeolocationPermissions.Callback callback){
  if(Build.VERSION.SDK_INT>=23 && checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION)!=PackageManager.PERMISSION_GRANTED){
@@ -60,11 +64,13 @@ public class NativeApp extends Activity {
             if(!checked){disable(this);stopService(new Intent(this,AdhanService.class));showStatus();}
             else requestEnable();
         });
-        test.setOnClickListener(v->{
-            if(!enabled(this)||!permitted(this)){status.setText("فعّل الأذان أولاً");return;}
-            try{addAlarm(this,28128,System.currentTimeMillis()+15000,"Test");status.setText("سيبدأ اختبار الأذان بعد 15 ثانية");}
-            catch(Exception ex){status.setText("فشل الاختبار: "+ex.getMessage());}
-        });
+        // Show the native adhan toggle only on the web app's Settings screen.
+        web.addJavascriptInterface(new Object(){
+            @JavascriptInterface public void settingsVisible(boolean visible){
+                runOnUiThread(()->head.setVisibility(visible?View.VISIBLE:View.GONE));
+            }
+        },"AdhanSettingsVisibility");
+
     }
     void requestEnable(){
         if(!permitted(this)){
