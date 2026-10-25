@@ -1,7 +1,7 @@
 name: Build V28 Adhan APK (test)
 on:
   push:
-    branches: [test/android-adhan-v29-clean-ui-20261025]
+    branches: [build/v32-native-adhan-green-20261025]
     paths: ['android-adhan-v28/**', '.github/workflows/v28-adhan-apk.yml']
   workflow_dispatch:
 jobs:
@@ -28,6 +28,11 @@ jobs:
           curl --fail --location --retry 3 "https://relaxed-kitsune-ff167d.netlify.app/prayer-audio/adhan_fajr.mp3" -o android-adhan-v28/app/src/main/res/raw/adhan_fajr.mp3
           test "$(wc -c < android-adhan-v28/app/src/main/res/raw/adhan.mp3)" -gt 100000
           test "$(wc -c < android-adhan-v28/app/src/main/res/raw/adhan_fajr.mp3)" -gt 100000
+      - name: Generate green application icon
+        run: |
+          python -m pip install cairosvg
+          mkdir -p android-adhan-v28/app/src/main/res/drawable
+          python -c "import cairosvg; cairosvg.svg2png(url='artifacts/mushaf-prayer/public/favicon.svg',write_to='android-adhan-v28/app/src/main/res/drawable/icon_green.png',output_width=192,output_height=192)"
       - name: Build debug APK
         working-directory: android-adhan-v28
         run: gradle :app:assembleDebug --no-daemon
