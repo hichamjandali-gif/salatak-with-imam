@@ -1,0 +1,3 @@
+plugins { id 'com.android.application' }
+android { namespace 'com.jandali.salatak.adhan'; compileSdk 35
+ defaultConfig { applicationId 'com.jandali.salatak.adhan'; minSdk 26; targetSdk 34; versionCode 28; versionName '28.0-test' } }
