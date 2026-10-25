@@ -1,0 +1,44 @@
+name: Deploy prayer website without advertising to GitHub Pages
+on:
+  push:
+    branches: [migration/github-pages-no-ads-20261025]
+    paths: ['artifacts/mushaf-prayer/**','.github/workflows/prayer-github-pages.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+concurrency:
+  group: prayer-pages
+  cancel-in-progress: false
+jobs:
+  deploy:
+    environment:
+      name: github-pages
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: '10'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Build standalone online UI with GitHub Pages base path
+        env:
+          PORT: '5173'
+          BASE_PATH: '/salatak-with-imam/'
+          NODE_ENV: production
+        run: pnpm --filter @workspace/mushaf-prayer build
+      - name: Package HTML SPA fallback
+        run: |
+          cp artifacts/mushaf-prayer/dist/public/index.html artifacts/mushaf-prayer/dist/public/404.html
+          test -s artifacts/mushaf-prayer/dist/public/index.html
+          if grep -RiqE 'Build your own site with Netlify|Powered by Netlify' artifacts/mushaf-prayer/dist/public; then exit 1; fi
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: artifacts/mushaf-prayer/dist/public
+      - uses: actions/deploy-pages@v4
