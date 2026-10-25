@@ -1,0 +1,62 @@
+name: Version 30 - No Netlify Ads - Offline UI inside APK
+on:
+  push:
+    branches: [build/v30-offline-ui-20261025]
+    paths: ['android-adhan-v28/**','artifacts/mushaf-prayer/**','.github/workflows/v30-offline-apk.yml']
+  workflow_dispatch:
+jobs:
+  android:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: pnpm
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Build offline UI
+        env:
+          PORT: '5173'
+          BASE_PATH: './'
+          NODE_ENV: production
+        run: pnpm --filter @workspace/mushaf-prayer build
+      - name: Copy frontend into Android assets
+        run: |
+          mkdir -p android-adhan-v28/app/src/main/assets
+          cp -a artifacts/mushaf-prayer/dist/public/. android-adhan-v28/app/src/main/assets/
+          test -s android-adhan-v28/app/src/main/assets/index.html
+          if grep -RiqE 'Powered by Netlify|Build your own site with Netlify' android-adhan-v28/app/src/main/assets; then
+            echo 'Promotional Netlify content detected in compiled assets'
+            exit 1
+          fi
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v4
+        with:
+          packages: 'platform-tools platforms;android-35 build-tools;35.0.0'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.10.2'
+      - name: Acquire offline adhan audio
+        run: |
+          mkdir -p android-adhan-v28/app/src/main/res/raw
+          curl --fail --location --retry 3 "https://relaxed-kitsune-ff167d.netlify.app/prayer-audio/adhan.mp3" -o android-adhan-v28/app/src/main/res/raw/adhan.mp3
+          curl --fail --location --retry 3 "https://relaxed-kitsune-ff167d.netlify.app/prayer-audio/adhan_fajr.mp3" -o android-adhan-v28/app/src/main/res/raw/adhan_fajr.mp3
+          test "$(wc -c < android-adhan-v28/app/src/main/res/raw/adhan.mp3)" -gt 100000
+          test "$(wc -c < android-adhan-v28/app/src/main/res/raw/adhan_fajr.mp3)" -gt 100000
+      - name: Build Android v30 APK
+        working-directory: android-adhan-v28
+        run: gradle :app:assembleDebug --no-daemon
+      - uses: actions/upload-artifact@v4
+        with:
+          name: salatak-v30-offline-apk
+          path: android-adhan-v28/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
