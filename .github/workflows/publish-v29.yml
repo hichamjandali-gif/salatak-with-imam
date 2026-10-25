@@ -1,0 +1,37 @@
+name: Publish approved v29 APK
+on:
+  push:
+    branches: [publish/v29-release-20261025]
+    paths: ['.github/workflows/publish-v29.yml']
+  workflow_dispatch:
+permissions:
+  contents: write
+  actions: read
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fetch exact tested v29 APK artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p release
+          gh run download 40220749788 --repo "${{ github.repository }}" --name salatak-adhan-v28-test-apk --dir release
+          test -s release/app-debug.apk
+          mv release/app-debug.apk release/Salatak_29_Approved.apk
+          sha256sum release/Salatak_29_Approved.apk
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view v29.0-approved --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            echo "Release exists. Uploading APK asset only."
+            gh release upload v29.0-approved release/Salatak_29_Approved.apk --clobber --repo "${{ github.repository }}"
+          else
+            gh release create v29.0-approved release/Salatak_29_Approved.apk \
+              --repo "${{ github.repository }}" \
+              --target 623d6d4740a42c3c38d1a260f03a8412d10009c5 \
+              --title "صلاتك مع الإمام 29 — النسخة المعتمدة" \
+              --notes "إصدار Android APK المعتمد للاختبار الميداني. الأذان التلقائي مع قفل الشاشة. يرجى تحديد المدينة وتفعيل أذونات المنبه. بعض عناصر الواجهة المستضافة على Netlify ما زالت موجودة. هذه حزمة Android تجريبية التوقيع وليست نسخة متجر Google Play."
+          fi
