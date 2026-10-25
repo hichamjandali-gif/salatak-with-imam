@@ -134,7 +134,7 @@ public class NativeApp extends Activity {
         PendingIntent sound=pending(c,id,prayer,PendingIntent.FLAG_UPDATE_CURRENT);
         PendingIntent display=PendingIntent.getActivity(c,1,new Intent(c,NativeApp.class),
             PendingIntent.FLAG_UPDATE_CURRENT|PendingIntent.FLAG_IMMUTABLE);
-        a.setAlarmClock(new AlarmManager.AlarmClockInfo(epoch,display),sound);
+        a.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP,epoch,sound);
     }
     static synchronized void cancel(Context c){
         AlarmManager a=(AlarmManager)c.getSystemService(ALARM_SERVICE);
