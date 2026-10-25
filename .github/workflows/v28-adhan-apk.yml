@@ -1,7 +1,7 @@
 name: Build V28 Adhan APK (test)
 on:
   push:
-    branches: [test/android-adhan-v28-20261025]
+    branches: [test/android-adhan-v28-side-by-side-20261025]
     paths: ['android-adhan-v28/**', '.github/workflows/v28-adhan-apk.yml']
   workflow_dispatch:
 jobs:
