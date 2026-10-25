@@ -1,3 +1,4 @@
 plugins { id 'com.android.application' }
 android { namespace 'com.jandali.salatak.adhan'; compileSdk 35
- defaultConfig { applicationId 'com.jandali.salatak.adhan.clean29'; minSdk 26; targetSdk 34; versionCode 29; versionName '29.0-test' } }
+ defaultConfig { applicationId 'com.jandali.salatak.adhan.clock33'; minSdk 26; targetSdk 34; versionCode 33; versionName '33.0-clock-style' } }
+dependencies { implementation 'androidx.webkit:webkit:1.12.1' }
