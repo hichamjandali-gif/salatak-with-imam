@@ -1,0 +1,36 @@
+name: Build V28 Adhan APK (test)
+on:
+  push:
+    branches: [test/android-adhan-v28-20261025]
+    paths: ['android-adhan-v28/**', '.github/workflows/v28-adhan-apk.yml']
+  workflow_dispatch:
+jobs:
+  android:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.10.2'
+      - name: Acquire adhan audio for offline APK playback
+        run: |
+          mkdir -p android-adhan-v28/app/src/main/res/raw
+          curl --fail --location --retry 3 "https://relaxed-kitsune-ff167d.netlify.app/prayer-audio/adhan.mp3" -o android-adhan-v28/app/src/main/res/raw/adhan.mp3
+          curl --fail --location --retry 3 "https://relaxed-kitsune-ff167d.netlify.app/prayer-audio/adhan_fajr.mp3" -o android-adhan-v28/app/src/main/res/raw/adhan_fajr.mp3
+          test "$(wc -c < android-adhan-v28/app/src/main/res/raw/adhan.mp3)" -gt 100000
+          test "$(wc -c < android-adhan-v28/app/src/main/res/raw/adhan_fajr.mp3)" -gt 100000
+      - name: Build debug APK
+        working-directory: android-adhan-v28
+        run: gradle :app:assembleDebug --no-daemon
+      - uses: actions/upload-artifact@v4
+        with:
+          name: salatak-adhan-v28-test-apk
+          path: android-adhan-v28/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
