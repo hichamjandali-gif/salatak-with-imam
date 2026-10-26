@@ -67,7 +67,7 @@ public class NativeApp extends Activity {
         // Show the native adhan toggle only on the web app's Settings screen.
         web.addJavascriptInterface(new Object(){
             @JavascriptInterface public void settingsVisible(boolean visible){
-                runOnUiThread(()->head.setVisibility(visible?View.VISIBLE:View.GONE));
+                runOnUiThread(()->head.setVisibility(View.VISIBLE));
             }
         },"AdhanSettingsVisibility");
 
