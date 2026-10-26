@@ -579,10 +579,11 @@ function ImamPrayerPage() {
   const [busy, setBusy] = useState(false);
   const player = useRef<HTMLAudioElement | null>(null);
   const halted = useRef(false);
-  useEffect(() => () => { halted.current = true; player.current?.pause(); }, []);
-  const stop = () => { halted.current = true; player.current?.pause(); setBusy(false); setStage('توقفت القراءة'); };
+  const setAwake = (value: boolean) => { try { (window as Window & { PrayerScreenBridge?: { setPrayerScreenAwake: (active: boolean) => void } }).PrayerScreenBridge?.setPrayerScreenAwake(value); } catch { /* Browser preview has no Android bridge */ } };
+  useEffect(() => () => { halted.current = true; player.current?.pause(); setAwake(false); }, []);
+  const stop = () => { halted.current = true; player.current?.pause(); setAwake(false); setBusy(false); setStage('توقفت القراءة'); };
   const start = async () => {
-    stop(); halted.current = false; setBusy(true);
+    stop(); halted.current = false; setBusy(true); setAwake(true);
     const surah = Number.isInteger(selected) && selected >= 1 && selected <= 114 ? selected : 2;
     try {
       // Fetch authenticated Quran audio URLs, instead of constructing possibly invalid verse IDs.
@@ -612,7 +613,7 @@ function ImamPrayerPage() {
       if (!halted.current) setStage('انتهت التلاوة');
     } catch (error) {
       if (!halted.current) setStage(error instanceof Error ? error.message : 'تعذرت التلاوة');
-    } finally { setBusy(false); }
+    } finally { setAwake(false); setBusy(false); }
   };
   return <PageFrame title="الصلاة مع الإمام">
     <main className="space-y-4 px-5">
