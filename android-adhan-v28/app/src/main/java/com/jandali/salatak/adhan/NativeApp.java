@@ -44,7 +44,10 @@ public class NativeApp extends Activity {
         head.addView(toggle);status=new TextView(this);status.setTextSize(12);head.addView(status);
         head.setVisibility(View.VISIBLE);
         root.addView(head);web=new WebView(this);root.addView(web,new LinearLayout.LayoutParams(-1,0,1));setContentView(root);
-        web.getSettings().setJavaScriptEnabled(true);web.getSettings().setDomStorageEnabled(true);
+        web.getSettings().setJavaScriptEnabled(true);
+        web.addJavascriptInterface(new Object(){
+            @JavascriptInterface public void setPrayerScreenAwake(boolean awake){runOnUiThread(()->{if(awake)getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);else getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);});}
+        },"PrayerScreenBridge");web.getSettings().setDomStorageEnabled(true);
         web.getSettings().setMediaPlaybackRequiresUserGesture(false);
         final WebViewAssetLoader loader = new WebViewAssetLoader.Builder().addPathHandler("/assets/",new WebViewAssetLoader.AssetsPathHandler(this)).build();
         web.setWebViewClient(new WebViewClient(){
