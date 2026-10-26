@@ -435,7 +435,7 @@ function QuranPage() {
   const load = () => { setStatus('loading'); fetchSurahs().then((data) => { setSurahs(data); setStatus('ready'); }).catch(() => setStatus('error')); };
   useEffect(load, []);
   const filtered = surahs.filter((surah) => (surah.name.includes(search) || surah.englishName.toLowerCase().includes(search.toLowerCase()) || String(surah.number) === search) && (!onlyFavorites || favorites.includes(surah.number)));
-  const toggleFavorite = (number: number) => setFavorites((current) => current.includes(number) ? current.filter((id) => id !== number) : [...current, number]);
+  const toggleFavorite = (number: number) => { setFavorites((current) => current.includes(number) ? current.filter((id) => id !== number) : [...current, number]); writeStorage('salatak-imam-surah', number); };
   return <PageFrame title="القرآن">
     <main className="space-y-5 px-5">
       <section className="relative overflow-hidden rounded-[1.7rem] bg-secondary p-5"><div className="absolute -left-5 -top-8 h-32 w-32 rounded-full border border-accent/30" /><div className="relative"><p className="text-xs font-bold tracking-[.16em] text-accent">الورد المحفوظ</p><h2 className="mt-2 text-2xl font-extrabold">كتاب الله، رفيقك كل يوم</h2><p className="mt-2 max-w-[270px] text-xs leading-6 text-muted-foreground">تصفح السور بهدوء، واحفظ موضعك لتعود إليه دون تردد.</p>{lastRead && <button onClick={() => setLocation(`/quran/${lastRead.surah}`)} data-testid="button-continue-quran" className="mt-4 flex min-h-10 items-center gap-2 rounded-xl bg-primary px-3 text-xs font-bold text-primary-foreground">متابعة القراءة <ChevronLeft size={15} /></button>}</div></section>
@@ -569,8 +569,67 @@ function NotFoundPage() {
   return <PageFrame title="الصفحة غير موجودة"><main className="px-5"><div className="rounded-2xl border border-border bg-card p-8 text-center"><WifiOff className="mx-auto mb-3 text-muted-foreground" size={28} /><h2 className="text-lg font-bold">هذه الصفحة غير موجودة</h2><Link href="/" data-testid="link-not-found-home" className="mt-4 inline-flex min-h-11 items-center rounded-xl bg-primary px-4 text-xs font-bold text-primary-foreground">العودة للرئيسية</Link></div></main></PageFrame>;
 }
 
+
+/** Native Android keeps exact alarm scheduling; this component owns only imam recitation. */
+function ImamPrayerPage() {
+  const { favorites } = useApp();
+  const [selected, setSelected] = useLocalState<number>('salatak-imam-surah', 2);
+  const [stage, setStage] = useState('جاهز للصلاة');
+  const [busy, setBusy] = useState(false);
+  const player = useRef<HTMLAudioElement | null>(null);
+  const halted = useRef(false);
+  useEffect(() => () => { halted.current = true; player.current?.pause(); }, []);
+  const stop = () => { halted.current = true; player.current?.pause(); setBusy(false); setStage('توقفت القراءة'); };
+  const start = async () => {
+    stop(); halted.current = false; setBusy(true);
+    const surah = Number.isInteger(selected) && selected >= 1 && selected <= 114 ? selected : 2;
+    try {
+      // Fetch authenticated Quran audio URLs, instead of constructing possibly invalid verse IDs.
+      const [fat, chosen] = await Promise.all([
+        fetch('https://api.alquran.cloud/v1/surah/1/ar.alafasy'),
+        fetch('https://api.alquran.cloud/v1/surah/' + surah + '/ar.alafasy'),
+      ]);
+      if (!fat.ok || !chosen.ok) throw new Error('تعذر جلب التلاوة');
+      const [f, c] = await Promise.all([fat.json(), chosen.json()]);
+      const urls: Array<{url: string; stage: string}> = [
+        ...(f.data?.ayahs || []).map((a: {audio?: string}) => ({url: a.audio || '', stage: 'قراءة الفاتحة'})),
+        ...(c.data?.ayahs || []).map((a: {audio?: string}) => ({url: a.audio || '', stage: 'قراءة السورة المختارة'})),
+      ].filter((a) => a.url);
+      if (!urls.length) throw new Error('لا توجد تسجيلات صوتية');
+      const audio = player.current || new Audio();
+      player.current = audio;
+      for (const item of urls) {
+        if (halted.current) break;
+        setStage(item.stage);
+        audio.src = item.url;
+        await new Promise<void>((resolve, reject) => {
+          audio.onended = () => resolve();
+          audio.onerror = () => reject(new Error('فشل تحميل صوت الآية'));
+          audio.play().catch(reject);
+        });
+      }
+      if (!halted.current) setStage('انتهت التلاوة');
+    } catch (error) {
+      if (!halted.current) setStage(error instanceof Error ? error.message : 'تعذرت التلاوة');
+    } finally { setBusy(false); }
+  };
+  return <PageFrame title="الصلاة مع الإمام">
+    <main className="space-y-4 px-5">
+      <h2 className="text-lg font-bold">السورة بعد الفاتحة</h2>
+      <p className="text-sm">اختر السورة التي وضعت عليها النجمة في القرآن. يُحفظ اختيارك على هذا الهاتف.</p>
+      <select data-testid="imam-surah-select" className="w-full rounded-xl border p-3 text-foreground bg-card" value={selected} onChange={(e) => { stop(); setSelected(Number(e.target.value)); }}>
+        {[...new Set([2, ...favorites])].map((n) => <option key={n} value={n}>{n === 2 ? 'البقرة (الافتراضية)' : 'سورة رقم ' + n}</option>)}
+      </select>
+      <p data-testid="imam-stage" role="status">{stage}</p>
+      <button data-testid="imam-start" onClick={start} disabled={busy} className="rounded-xl bg-primary px-5 py-3 text-primary-foreground">بدء قراءة الإمام</button>
+      <button data-testid="imam-stop" onClick={stop} className="rounded-xl border px-5 py-3">إيقاف</button>
+      <p className="text-xs">هذه معاينة لتلاوة الفاتحة ثم السورة المختارة، وليست بديلاً عن أداء الصلاة أو محرك حركاتها.</p>
+    </main>
+  </PageFrame>;
+}
+
 function Router() {
-  return <Switch><Route path="/" component={HomePage} /><Route path="/quran" component={QuranPage} /><Route path="/quran/:id" component={QuranReader} /><Route path="/qibla" component={QiblaPage} /><Route path="/adhkar" component={AdhkarPage} /><Route path="/settings" component={SettingsPage} /><Route path="/about" component={AboutPage} /><Route component={NotFoundPage} /></Switch>;
+  return <Switch><Route path="/" component={HomePage} /><Route path="/quran" component={QuranPage} /><Route path="/imam-prayer" component={ImamPrayerPage} /><Route path="/quran/:id" component={QuranReader} /><Route path="/qibla" component={QiblaPage} /><Route path="/adhkar" component={AdhkarPage} /><Route path="/settings" component={SettingsPage} /><Route path="/about" component={AboutPage} /><Route component={NotFoundPage} /></Switch>;
 }
 function App() {
   return <AppShell><WouterRouter base={import.meta.env.BASE_URL.replace(/\/$/, '')}><Router /></WouterRouter></AppShell>;
