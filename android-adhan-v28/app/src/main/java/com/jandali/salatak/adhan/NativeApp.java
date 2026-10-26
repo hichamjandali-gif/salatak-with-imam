@@ -12,6 +12,7 @@ import android.os.*;
 import android.provider.Settings;
 import android.view.*;
 import android.webkit.*;
+import androidx.webkit.WebViewAssetLoader;
 import android.widget.*;
 import org.json.*;
 import java.net.*;
@@ -21,7 +22,7 @@ import java.text.*;
 import java.util.*;
 
 public class NativeApp extends Activity {
-    static final String STORE="salatak_v28_native",URL="https://relaxed-kitsune-ff167d.netlify.app";
+    static final String STORE="salatak_v28_native",URL="https://appassets.androidplatform.net/assets/index.html";
     static final String[] KEYS={"Fajr","Dhuhr","Asr","Maghrib","Isha"};
     static SharedPreferences p(Context c){return c.getSharedPreferences(STORE,0);}
     static boolean enabled(Context c){return p(c).getBoolean("enabled",false);}
@@ -41,10 +42,13 @@ public class NativeApp extends Activity {
         LinearLayout head=new LinearLayout(this);head.setOrientation(1);head.setPadding(16,6,16,6);head.setBackgroundColor(0xffebf5ef);
         toggle=new Switch(this);toggle.setText("الأذان التلقائي — تفعيل / إلغاء");toggle.setTextSize(17);
         head.addView(toggle);status=new TextView(this);status.setTextSize(12);head.addView(status);
-        head.setVisibility(View.GONE);
+        head.setVisibility(View.VISIBLE);
         root.addView(head);web=new WebView(this);root.addView(web,new LinearLayout.LayoutParams(-1,0,1));setContentView(root);
         web.getSettings().setJavaScriptEnabled(true);web.getSettings().setDomStorageEnabled(true);
+        web.getSettings().setMediaPlaybackRequiresUserGesture(false);
+        final WebViewAssetLoader loader = new WebViewAssetLoader.Builder().addPathHandler("/assets/",new WebViewAssetLoader.AssetsPathHandler(this)).build();
         web.setWebViewClient(new WebViewClient(){
+            @Override public WebResourceResponse shouldInterceptRequest(WebView view,WebResourceRequest request){return loader.shouldInterceptRequest(request.getUrl());}
             @Override public void onPageFinished(WebView view,String url){super.onPageFinished(view,url);
                 view.evaluateJavascript("(function(){if(window.__adhanSettingsObserver)return;function update(){var t=document.body?document.body.innerText:'';var isSettings=!!(document.querySelector('h1,h2')&&/إعدادات المصحف والصلاة/.test(t.slice(0,450)));window.AdhanSettingsVisibility.settingsVisible(isSettings)};var o=new MutationObserver(function(){clearTimeout(window.__adhanSettingsTimer);window.__adhanSettingsTimer=setTimeout(update,120)});o.observe(document.documentElement,{subtree:true,childList:true,characterData:true});window.__adhanSettingsObserver=o;update()})()",null);
             }
@@ -67,7 +71,7 @@ public class NativeApp extends Activity {
         // Show the native adhan toggle only on the web app's Settings screen.
         web.addJavascriptInterface(new Object(){
             @JavascriptInterface public void settingsVisible(boolean visible){
-                runOnUiThread(()->head.setVisibility(visible?View.VISIBLE:View.GONE));
+                runOnUiThread(()->head.setVisibility(View.VISIBLE));
             }
         },"AdhanSettingsVisibility");
 
