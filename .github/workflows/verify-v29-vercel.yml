@@ -1,0 +1,33 @@
+name: Verify v29 alternative hosting build
+on:
+  push:
+    branches: [test/v29-vercel-hosting-20261026]
+  workflow_dispatch:
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: '10'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Build v29 web UI for alternate hosting
+        env:
+          PORT: '5173'
+          BASE_PATH: '/'
+          NODE_ENV: production
+        run: pnpm --filter @workspace/mushaf-prayer build
+      - name: Verify no Netlify banner in compiled site
+        run: |
+          test -s artifacts/mushaf-prayer/dist/public/index.html
+          ! grep -RiqE 'Powered by Netlify|Build your own site with Netlify' artifacts/mushaf-prayer/dist/public
+      - uses: actions/upload-artifact@v4
+        with:
+          name: v29-alternative-hosting-static-site
+          path: artifacts/mushaf-prayer/dist/public
+          if-no-files-found: error
