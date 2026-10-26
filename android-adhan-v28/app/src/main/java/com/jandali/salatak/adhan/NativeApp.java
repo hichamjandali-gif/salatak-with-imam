@@ -21,7 +21,7 @@ import java.text.*;
 import java.util.*;
 
 public class NativeApp extends Activity {
-    static final String STORE="salatak_v28_native",URL="https://relaxed-kitsune-ff167d.netlify.app";
+    static final String STORE="salatak_v28_native",URL="https://lm-s-hf-wl-sl--hichamjandali.replit.app";
     static final String[] KEYS={"Fajr","Dhuhr","Asr","Maghrib","Isha"};
     static SharedPreferences p(Context c){return c.getSharedPreferences(STORE,0);}
     static boolean enabled(Context c){return p(c).getBoolean("enabled",false);}
