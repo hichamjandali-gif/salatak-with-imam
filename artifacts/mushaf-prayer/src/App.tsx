@@ -1,4 +1,4 @@
-import { createContext, type Dispatch, type ReactNode, type SetStateAction, useContext, useEffect, useMemo, useState } from 'react';
+import { createContext, type Dispatch, type ReactNode, type SetStateAction, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Bell,
   BookOpen,
@@ -355,6 +355,7 @@ function HomePage() {
   const [today] = useState(new Date());
   return <PageFrame title="مساحتك للعبادة">
     <main className="space-y-6 px-5">
+      <Link href="/imam-prayer" data-testid="open-imam-prayer" className="block rounded-xl bg-accent px-4 py-3 text-center font-bold text-accent-foreground">الصلاة مع الإمام — اختيار السورة بعد الفاتحة</Link>
       <section className="pattern-star relative overflow-hidden rounded-[1.8rem] bg-primary p-6 text-primary-foreground shadow-xl shadow-primary/10 animate-rise">
         <div className="absolute -left-8 -top-10 h-36 w-36 rounded-full border border-accent/30" /><div className="absolute -left-1 top-0 h-24 w-24 rounded-full border border-accent/20" />
         <div className="relative">
