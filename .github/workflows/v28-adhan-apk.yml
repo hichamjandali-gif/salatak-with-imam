@@ -1,7 +1,7 @@
 name: Build V28 Adhan APK (test)
 on:
   push:
-    branches: [fix/v29-adhan-replit-no-netlify-20261026]
+    branches: [fix/prayer-favorite-adhan-20261026]
     paths: ['android-adhan-v28/**', '.github/workflows/v28-adhan-apk.yml']
   workflow_dispatch:
 jobs:
