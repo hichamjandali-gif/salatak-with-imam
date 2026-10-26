@@ -42,7 +42,31 @@ public class NativeApp extends Activity {
         toggle=new Switch(this);toggle.setText("الأذان التلقائي — تفعيل / إلغاء");toggle.setTextSize(17);
         head.addView(toggle);status=new TextView(this);status.setTextSize(12);head.addView(status);
         head.setVisibility(View.GONE);
-        root.addView(head);web=new WebView(this);root.addView(web,new LinearLayout.LayoutParams(-1,0,1));setContentView(root);
+        root.addView(head);
+        web=new WebView(this);
+        root.addView(web,new LinearLayout.LayoutParams(-1,0,1));
+        // Native navigation stays usable even if an injected hosting badge overlays web navigation.
+        LinearLayout nativeNav=new LinearLayout(this);
+        nativeNav.setOrientation(LinearLayout.HORIZONTAL);
+        nativeNav.setLayoutDirection(View.LAYOUT_DIRECTION_RTL);
+        nativeNav.setBackgroundColor(0xfff4f7f4);
+        String[] labels={"الرئيسية","القرآن","القبلة","الأذكار","الإعدادات"};
+        String[] routes={"/","/quran","/qibla","/adhkar","/settings"};
+        for(int n=0;n<labels.length;n++){
+            final String route=routes[n];
+            Button button=new Button(this);
+            button.setText(labels[n]);
+            button.setAllCaps(false);
+            button.setTextSize(11);
+            button.setPadding(0,0,0,0);
+            button.setOnClickListener(v->{
+                String js="(function(){var p="+org.json.JSONObject.quote(route)+";var l=Array.from(document.querySelectorAll('a[href]')).find(function(a){try{return new URL(a.href).pathname.replace(/\\/$/,'')===p.replace(/\\/$/,'');}catch(e){return false}});if(l){l.click();}else{history.pushState({},'',p);dispatchEvent(new PopStateEvent('popstate'));}})()";
+                web.evaluateJavascript(js,null);
+            });
+            nativeNav.addView(button,new LinearLayout.LayoutParams(0,64,1));
+        }
+        root.addView(nativeNav,new LinearLayout.LayoutParams(-1,64));
+        setContentView(root);
         web.getSettings().setJavaScriptEnabled(true);web.getSettings().setDomStorageEnabled(true);
         web.setWebViewClient(new WebViewClient(){
             @Override public void onPageFinished(WebView view,String url){super.onPageFinished(view,url);
