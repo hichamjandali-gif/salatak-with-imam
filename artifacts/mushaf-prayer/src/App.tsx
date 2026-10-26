@@ -435,7 +435,13 @@ function QuranPage() {
   const load = () => { setStatus('loading'); fetchSurahs().then((data) => { setSurahs(data); setStatus('ready'); }).catch(() => setStatus('error')); };
   useEffect(load, []);
   const filtered = surahs.filter((surah) => (surah.name.includes(search) || surah.englishName.toLowerCase().includes(search.toLowerCase()) || String(surah.number) === search) && (!onlyFavorites || favorites.includes(surah.number)));
-  const toggleFavorite = (number: number) => setFavorites((current) => current.includes(number) ? current.filter((id) => id !== number) : [...current, number]);
+  const toggleFavorite = (number: number) => {
+    // Keep one explicit surah selection for the imam, separate from browsing history.
+    // Do not infer that saving a favorite changes a separately hosted prayer engine.
+    const selected = readStorage<number | null>('salatak-imam-preferred-surah', null);
+    writeStorage('salatak-imam-preferred-surah', selected === number ? null : number);
+    setFavorites((current) => selected === number ? current.filter((id) => id !== number) : [...new Set([...current, number])]);
+  };
   return <PageFrame title="القرآن">
     <main className="space-y-5 px-5">
       <section className="relative overflow-hidden rounded-[1.7rem] bg-secondary p-5"><div className="absolute -left-5 -top-8 h-32 w-32 rounded-full border border-accent/30" /><div className="relative"><p className="text-xs font-bold tracking-[.16em] text-accent">الورد المحفوظ</p><h2 className="mt-2 text-2xl font-extrabold">كتاب الله، رفيقك كل يوم</h2><p className="mt-2 max-w-[270px] text-xs leading-6 text-muted-foreground">تصفح السور بهدوء، واحفظ موضعك لتعود إليه دون تردد.</p>{lastRead && <button onClick={() => setLocation(`/quran/${lastRead.surah}`)} data-testid="button-continue-quran" className="mt-4 flex min-h-10 items-center gap-2 rounded-xl bg-primary px-3 text-xs font-bold text-primary-foreground">متابعة القراءة <ChevronLeft size={15} /></button>}</div></section>
