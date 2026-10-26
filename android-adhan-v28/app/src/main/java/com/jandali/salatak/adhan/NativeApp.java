@@ -41,7 +41,7 @@ public class NativeApp extends Activity {
         LinearLayout head=new LinearLayout(this);head.setOrientation(1);head.setPadding(16,6,16,6);head.setBackgroundColor(0xffebf5ef);
         toggle=new Switch(this);toggle.setText("الأذان التلقائي — تفعيل / إلغاء");toggle.setTextSize(17);
         head.addView(toggle);status=new TextView(this);status.setTextSize(12);head.addView(status);
-        head.setVisibility(View.GONE);
+        head.setVisibility(View.VISIBLE); // Keep native exact-alarm control accessible on Replit UI
         root.addView(head);web=new WebView(this);root.addView(web,new LinearLayout.LayoutParams(-1,0,1));setContentView(root);
         web.getSettings().setJavaScriptEnabled(true);web.getSettings().setDomStorageEnabled(true);
         web.setWebViewClient(new WebViewClient(){
