@@ -634,6 +634,6 @@ function Router() {
   return <Switch><Route path="/" component={HomePage} /><Route path="/quran" component={QuranPage} /><Route path="/imam-prayer" component={ImamPrayerPage} /><Route path="/quran/:id" component={QuranReader} /><Route path="/qibla" component={QiblaPage} /><Route path="/adhkar" component={AdhkarPage} /><Route path="/settings" component={SettingsPage} /><Route path="/about" component={AboutPage} /><Route component={NotFoundPage} /></Switch>;
 }
 function App() {
-  return <AppShell><WouterRouter base={import.meta.env.BASE_URL.replace(/\/$/, '')}><Router /></WouterRouter></AppShell>;
+  return <AppShell><WouterRouter base={import.meta.env.BASE_URL === './' ? '' : import.meta.env.BASE_URL.replace(/\/$/, '')}><Router /></WouterRouter></AppShell>;
 }
 export default App;
