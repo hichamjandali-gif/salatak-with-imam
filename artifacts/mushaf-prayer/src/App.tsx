@@ -198,6 +198,30 @@ function AppShell({ children }: { children: ReactNode }) {
   const [manualLocationState, setManualLocationState] = useState<'idle' | 'loading' | 'error'>('idle');
   const [favorites, setFavorites] = useLocalState<number[]>('mushaf-favorites', []);
   const [bookmarks, setBookmarks] = useLocalState<string[]>('mushaf-bookmarks', []);
+  // Download Al-Fatiha and the newest starred surah recordings into the service
+  // worker audio cache before prayer; changes to favorites never affect the imam engine.
+  useEffect(() => {
+    if (!favorites.length || !('serviceWorker' in navigator)) return;
+    let cancelled = false;
+    const warm = async () => {
+      try {
+        const registration = await navigator.serviceWorker.ready;
+        const surahs = [1, favorites[favorites.length - 1]];
+        const results = await Promise.all(surahs.map(async number => {
+          const response = await fetch('https://api.alquran.cloud/v1/surah/' + number + '/ar.alafasy');
+          if (!response.ok) return [];
+          const json = await response.json();
+          return (json.data?.ayahs || []).slice(0, 40).map((a: { audio?: string }) => a.audio).filter((url: unknown): url is string => typeof url === 'string');
+        }));
+        if (!cancelled) (navigator.serviceWorker.controller || registration.active)?.postMessage({
+          type: 'SALATAK_PREFETCH_AUDIO', urls: results.flat(),
+        });
+      } catch { /* Bad network must never interrupt Quran, prayer or adhan. */ }
+    };
+    void warm();
+    return () => { cancelled = true; };
+  }, [favorites]);
+
   const [lastRead, setLastRead] = useLocalState<{ surah: number; ayah: number } | null>('mushaf-last-read', null);
 
   useEffect(() => {
