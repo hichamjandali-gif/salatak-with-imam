@@ -1,7 +1,7 @@
 name: Build clean prayer features Android APK
 on:
   push:
-    branches: [fix-clean-prayer-3features-20261026]
+    branches: [fix-v30-white-screen-assets-20261027]
   workflow_dispatch:
 permissions:
   contents: read
@@ -29,6 +29,15 @@ jobs:
         run: |
           mkdir -p android-adhan-v28/app/src/main/assets
           cp -a artifacts/mushaf-prayer/dist/public/. android-adhan-v28/app/src/main/assets/
+          # Preserve relative module URLs while giving the SPA a valid home path.
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('android-adhan-v28/app/src/main/assets/index.html')
+          html=p.read_text()
+          js='<base href="/assets/"><script>if(location.hostname==="appassets.androidplatform.net" && location.pathname==="/assets/index.html"){history.replaceState(null,"","/");}</script>'
+          html=html.replace('<head>', '<head>'+js, 1)
+          p.write_text(html)
+          PY
           test -s android-adhan-v28/app/src/main/assets/index.html
           ! grep -RiqE 'relaxed-kitsune|netlify\.app|Powered by Netlify|replit\.app|adsbygoogle|googlesyndication' android-adhan-v28/app/src/main/assets
           ! grep -iqE 'netlify\.app|replit\.app' android-adhan-v28/app/src/main/java/com/jandali/salatak/adhan/NativeApp.java
