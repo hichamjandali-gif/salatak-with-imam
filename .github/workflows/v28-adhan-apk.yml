@@ -1,7 +1,7 @@
 name: Build V28 Adhan APK (test)
 on:
   push:
-    branches: [fix/v31-hybrid-adhan-netlify-20261025]
+    branches: [fix-v31-takbir-audio-20261027]
     paths: ['android-adhan-v28/**', '.github/workflows/v28-adhan-apk.yml']
   workflow_dispatch:
 jobs:
@@ -28,6 +28,12 @@ jobs:
           curl --fail --location --retry 3 "https://relaxed-kitsune-ff167d.netlify.app/prayer-audio/adhan_fajr.mp3" -o android-adhan-v28/app/src/main/res/raw/adhan_fajr.mp3
           test "$(wc -c < android-adhan-v28/app/src/main/res/raw/adhan.mp3)" -gt 100000
           test "$(wc -c < android-adhan-v28/app/src/main/res/raw/adhan_fajr.mp3)" -gt 100000
+      - name: Bundle prayer takbir audio locally
+        run: |
+          mkdir -p android-adhan-v28/app/src/main/assets/prayer-audio
+          curl --fail --location --retry 3 "https://azzahraschool.org/wp-content/uploads/2017/12/Takbeer.mp3" -o android-adhan-v28/app/src/main/assets/prayer-audio/takbir.mp3
+          file android-adhan-v28/app/src/main/assets/prayer-audio/takbir.mp3
+          test "$(wc -c < android-adhan-v28/app/src/main/assets/prayer-audio/takbir.mp3)" -gt 1000
       - name: Generate original green app icon
         run: |
           python -m pip install cairosvg
