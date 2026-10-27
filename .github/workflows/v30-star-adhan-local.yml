@@ -1,7 +1,7 @@
 name: Build clean prayer features Android APK
 on:
   push:
-    branches: [fix-v30-white-screen-assets-20261027]
+    branches: [fix-v30-quran-audio-20261027]
   workflow_dispatch:
 permissions:
   contents: read
