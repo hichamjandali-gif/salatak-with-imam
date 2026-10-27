@@ -1,0 +1,28 @@
+name: Verify Quran audio prefetch build
+on:
+  push:
+    branches: [fix-quran-audio-prefetch-20261027]
+  workflow_dispatch:
+jobs:
+  web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: '10'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Build Quran site
+        env:
+          PORT: '5173'
+          BASE_PATH: '/'
+          NODE_ENV: production
+        run: pnpm --filter @workspace/mushaf-prayer build
+      - name: Verify prefetch worker and app bundle
+        run: |
+          test -s artifacts/mushaf-prayer/dist/public/index.html
+          grep -q SALATAK_PREFETCH_AUDIO artifacts/mushaf-prayer/dist/public/sw.js
