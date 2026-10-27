@@ -45,6 +45,19 @@ public class NativeApp extends Activity {
         root.addView(head);web=new WebView(this);root.addView(web,new LinearLayout.LayoutParams(-1,0,1));setContentView(root);
         web.getSettings().setJavaScriptEnabled(true);web.getSettings().setDomStorageEnabled(true);
         web.setWebViewClient(new WebViewClient(){
+            @Override public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest request){
+                Uri u=request.getUrl();
+                if("https".equals(u.getScheme()) && "relaxed-kitsune-ff167d.netlify.app".equals(u.getHost()) && "/prayer-audio/takbir.mp3".equals(u.getPath())){
+                    try {
+                        InputStream audio=getAssets().open("prayer-audio/takbir.mp3");
+                        WebResourceResponse response=new WebResourceResponse("audio/mpeg",null,audio);
+                        response.setStatusCodeAndReasonPhrase(200,"OK");
+                        response.setResponseHeaders(Collections.singletonMap("Access-Control-Allow-Origin","*"));
+                        return response;
+                    }catch(IOException e){note(NativeApp.this,"ملف التكبير المحلي غير متوفر");}
+                }
+                return super.shouldInterceptRequest(view,request);
+            }
             @Override public void onPageFinished(WebView view,String url){super.onPageFinished(view,url);
                 view.evaluateJavascript("(function(){if(window.__netlifyCleanup)return;window.__netlifyCleanup=true;function hide(){document.querySelectorAll('body *').forEach(function(e){var t=(e.innerText||'').trim();if(!t||t.length>260)return;if(/Build your own site with Netlify|Powered by Netlify/i.test(t)){var n=e;for(var k=0;k<3&&n.parentElement;k++){var p=n.parentElement;if((p.innerText||'').length>290)break;n=p;}n.style.setProperty('display','none','important');}})}var timer;new MutationObserver(function(){clearTimeout(timer);timer=setTimeout(hide,200)}).observe(document.documentElement,{childList:true,subtree:true});hide()})()",null);
                 view.evaluateJavascript("(function(){if(window.__adhanSettingsObserver)return;function update(){var t=document.body?document.body.innerText:'';var isSettings=!!(document.querySelector('h1,h2')&&/إعدادات المصحف والصلاة/.test(t.slice(0,450)));window.AdhanSettingsVisibility.settingsVisible(isSettings)};var o=new MutationObserver(function(){clearTimeout(window.__adhanSettingsTimer);window.__adhanSettingsTimer=setTimeout(update,120)});o.observe(document.documentElement,{subtree:true,childList:true,characterData:true});window.__adhanSettingsObserver=o;update()})()",null);
