@@ -452,13 +452,38 @@ function QuranReader() {
   const { settings, setSettings, bookmarks, setBookmarks, setLastRead } = useApp();
   const [data, setData] = useState<{ surah: Surah; ayahs: Ayah[] } | null>(null);
   const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading');
+  const [audioState, setAudioState] = useState<'idle'|'playing'|'error'>('idle');
+  const audioRef = useRef<HTMLAudioElement|null>(null);
+  useEffect(() => () => { audioRef.current?.pause(); audioRef.current=null; },[id]);
+  const playSurah = async () => {
+    if (audioState === 'playing') { audioRef.current?.pause(); audioRef.current=null; setAudioState('idle'); return; }
+    if (!id || !data) return;
+    setAudioState('playing');
+    try {
+      const response = await fetch('https://api.alquran.cloud/v1/surah/' + id + '/ar.alafasy');
+      if (!response.ok) throw Error('audio API');
+      const payload = await response.json();
+      const urls: string[] = (payload.data?.ayahs || []).map((a: {audio?:string}) => a.audio).filter(Boolean);
+      if (!urls.length) throw Error('empty audio');
+      const audio = new Audio(); audioRef.current = audio;
+      for (const url of urls) {
+        if (audioRef.current !== audio) return;
+        audio.src=url;
+        await new Promise<void>((resolve,reject) => {
+          audio.onended=()=>resolve(); audio.onerror=()=>reject(new Error('audio failed'));
+          audio.play().catch(reject);
+        });
+      }
+      if (audioRef.current === audio) { audioRef.current=null; setAudioState('idle'); }
+    } catch { audioRef.current=null; setAudioState('error'); }
+  };
   const load = () => { if (!id) return; setStatus('loading'); fetchSurah(id).then((result) => { setData(result); setStatus('ready'); }).catch(() => setStatus('error')); };
   useEffect(load, [id]);
   useEffect(() => { if (id) setLastRead((current) => ({ surah: Number(id), ayah: current?.surah === Number(id) ? current.ayah : 1 })); }, [id]);
   const toggleBookmark = (ayah: number) => { const key = `${id}:${ayah}`; setBookmarks((current) => current.includes(key) ? current.filter((item) => item !== key) : [...current, key]); };
   return <PageFrame title={data?.surah.name ?? 'سورة'} back>
        <main className="px-5">
-        <div className="mb-5 flex items-center justify-between rounded-2xl border border-border bg-card px-3 py-2"><div><p className="font-arabic text-xl">{data?.surah.name ?? 'جاري التحميل'}</p><p className="text-[11px] text-muted-foreground">{data ? `${data.surah.numberOfAyahs} آية · ${data.surah.revelationType === 'Meccan' ? 'مكية' : 'مدنية'}` : '...'}</p></div><div className="flex items-center gap-1"><span data-testid="status-recitation" aria-label="التلاوة الصوتية غير متاحة حالياً" title={`التلاوة الصوتية قريباً · القارئ المقترح: ${RECITATION.defaultReciter}`} className="flex h-10 items-center gap-1 rounded-xl bg-secondary px-2 text-[10px] text-muted-foreground opacity-60"><Volume2 size={15} /><span>قريباً</span></span><button onClick={() => setSettings((s) => ({ ...s, fontSize: Math.max(23, s.fontSize - 2) }))} data-testid="button-font-decrease" aria-label="تصغير الخط" className="grid h-10 w-10 place-items-center rounded-xl bg-secondary"><Minus size={16} /></button><span className="w-8 text-center text-xs font-bold">{settings.fontSize}</span><button onClick={() => setSettings((s) => ({ ...s, fontSize: Math.min(42, s.fontSize + 2) }))} data-testid="button-font-increase" aria-label="تكبير الخط" className="grid h-10 w-10 place-items-center rounded-xl bg-secondary"><Plus size={16} /></button></div></div>
+        <div className="mb-5 flex items-center justify-between rounded-2xl border border-border bg-card px-3 py-2"><div><p className="font-arabic text-xl">{data?.surah.name ?? 'جاري التحميل'}</p><p className="text-[11px] text-muted-foreground">{data ? `${data.surah.numberOfAyahs} آية · ${data.surah.revelationType === 'Meccan' ? 'مكية' : 'مدنية'}` : '...'}</p></div><div className="flex items-center gap-1"><button onClick={playSurah} data-testid="quran-play-audio" aria-label="تشغيل التلاوة الصوتية" className="flex h-10 items-center gap-1 rounded-xl bg-secondary px-2 text-[10px]"><Volume2 size={15}/><span>{audioState === 'playing' ? 'إيقاف' : audioState === 'error' ? 'خطأ صوت' : 'استماع'}</span></button><button onClick={() => setSettings((s) => ({ ...s, fontSize: Math.max(23, s.fontSize - 2) }))} data-testid="button-font-decrease" aria-label="تصغير الخط" className="grid h-10 w-10 place-items-center rounded-xl bg-secondary"><Minus size={16} /></button><span className="w-8 text-center text-xs font-bold">{settings.fontSize}</span><button onClick={() => setSettings((s) => ({ ...s, fontSize: Math.min(42, s.fontSize + 2) }))} data-testid="button-font-increase" aria-label="تكبير الخط" className="grid h-10 w-10 place-items-center rounded-xl bg-secondary"><Plus size={16} /></button></div></div>
        {status === 'error' ? <FriendlyError onRetry={load} message="تعذّر فتح السورة أو التحقق من آياتها" /> : status === 'loading' ? <div className="space-y-4">{[1, 2, 3].map((x) => <Skeleton key={x} className="h-36" />)}</div> : <><div className="mb-6 text-center"><div className="mx-auto mb-3 h-px w-20 bg-accent" /><p className="font-arabic text-3xl">{data?.surah.name}</p>{data && data.surah.number !== 9 && !BASMALA_PATTERN.test(data.ayahs[0]?.text ?? '') && <p className="mt-1 text-xs text-muted-foreground">بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ</p>}</div><div className="divide-y divide-border/80">{data?.ayahs.map((ayah) => { const key = `${id}:${ayah.numberInSurah}`; const marked = bookmarks.includes(key); return <article key={ayah.number} onClick={() => setLastRead({ surah: Number(id), ayah: ayah.numberInSurah })} data-testid={`article-ayah-${ayah.numberInSurah}`} className="group relative py-6"><p dir="rtl" className="font-arabic text-foreground leading-[2.15] transition-colors" style={{ fontSize: settings.fontSize }}>{ayah.text} <span className="mx-1 inline-grid h-8 w-8 translate-y-1 place-items-center rounded-full border border-accent/60 align-middle font-sans text-xs text-accent">{ayah.numberInSurah}</span></p><button onClick={() => toggleBookmark(ayah.numberInSurah)} data-testid={`button-bookmark-ayah-${ayah.numberInSurah}`} aria-label={`حفظ الآية ${ayah.numberInSurah}`} className={`mt-3 flex min-h-9 items-center gap-2 rounded-lg px-2 text-[11px] transition-opacity ${marked ? 'text-accent' : 'text-muted-foreground opacity-60 md:opacity-100'}`}><Bookmark size={14} fill={marked ? 'currentColor' : 'none'} /> {marked ? 'محفوظة' : 'حفظ الآية'}</button></article>; })}</div></>}
     </main>
   </PageFrame>;
