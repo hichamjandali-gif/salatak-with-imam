@@ -31,6 +31,67 @@ public class NativeApp extends Activity {
         AlarmManager a=(AlarmManager)c.getSystemService(ALARM_SERVICE);
         return a!=null&&a.canScheduleExactAlarms();
     }
+    // Preserve complete Quran MP3 files across prayers; never cache prayer-time adhan.
+    WebResourceResponse cachedRecitation(WebResourceRequest request){
+        Uri uri=request.getUrl();
+        String host=uri.getHost(),path=uri.getPath();
+        if(!"https".equals(uri.getScheme())||host==null||path==null||!path.toLowerCase(Locale.ROOT).endsWith(".mp3"))return null;
+        boolean trusted=host.equals("cdn.islamic.network")||host.equals("cdn.alquran.cloud")||host.equals("audio.alquran.cloud")||host.equals("everyayah.com")||host.equals("relaxed-kitsune-ff167d.netlify.app")||host.endsWith(".everyayah.com");
+        if(!trusted||path.toLowerCase(Locale.ROOT).contains("adhan")||path.toLowerCase(Locale.ROOT).contains("takbir"))return null;
+        try {
+            java.security.MessageDigest digest=java.security.MessageDigest.getInstance("SHA-256");
+            byte[] hash=digest.digest(uri.toString().getBytes(StandardCharsets.UTF_8));
+            StringBuilder key=new StringBuilder();for(byte b:hash)key.append(String.format(Locale.ROOT,"%02x",b & 255));
+            File dir=new File(getCacheDir(),"quran-recitation");if(!dir.exists()&&!dir.mkdirs())return null;
+            File cached=new File(dir,key.toString()+".mp3");
+            synchronized(NativeApp.class){
+                if(!cached.isFile()||cached.length()<1024){
+                    HttpURLConnection conn=(HttpURLConnection)new URL(uri.toString()).openConnection();
+                    conn.setConnectTimeout(9000);conn.setReadTimeout(12000);
+                    conn.setRequestProperty("Accept-Encoding","identity");
+                    conn.setRequestProperty("User-Agent","Salatak-Quran-AudioCache/1");
+                    try {
+                        if(conn.getResponseCode()!=200)return null;
+                        int length=conn.getContentLength();
+                        if(length>16000000)return null;
+                        File tmp=new File(dir,key.toString()+".partial");
+                        long total=0;
+                        try(InputStream in=conn.getInputStream();FileOutputStream out=new FileOutputStream(tmp)){
+                            byte[] buf=new byte[16384];int n;
+                            while((n=in.read(buf))!=-1){total+=n;if(total>16000000){tmp.delete();return null;}out.write(buf,0,n);}
+                        }
+                        if(total<1024){tmp.delete();return null;}
+                        if(!tmp.renameTo(cached)){tmp.delete();return null;}
+                    }finally{conn.disconnect();}
+                }
+            }
+            long size=cached.length(),start=0,end=size-1;
+            String range=request.getRequestHeaders().get("Range");
+            if(range==null)range=request.getRequestHeaders().get("range");
+            boolean partial=false;
+            if(range!=null&&range.startsWith("bytes=")){
+                String[] bounds=range.substring(6).split("-",2);
+                if(!bounds[0].isEmpty())start=Long.parseLong(bounds[0]);
+                if(bounds.length>1&&!bounds[1].isEmpty())end=Math.min(end,Long.parseLong(bounds[1]));
+                if(start>=size||end<start)return null;
+                partial=true;
+            }
+            InputStream in=new FileInputStream(cached);
+            long skip=start;while(skip>0){long n=in.skip(skip);if(n<=0){in.close();return null;}skip-=n;}
+            final long limit=end-start+1;
+            InputStream bounded=new java.io.FilterInputStream(in){long left=limit;
+                @Override public int read()throws IOException{if(left<=0)return -1;int c=super.read();if(c!=-1)left--;return c;}
+                @Override public int read(byte[] b,int off,int len)throws IOException{if(left<=0)return -1;int n=super.read(b,off,(int)Math.min(len,left));if(n>0)left-=n;return n;}
+            };
+            WebResourceResponse response=new WebResourceResponse("audio/mpeg",null,bounded);
+            response.setStatusCodeAndReasonPhrase(partial?206:200,partial?"Partial Content":"OK");
+            Map<String,String> headers=new HashMap<>();
+            headers.put("Accept-Ranges","bytes");headers.put("Content-Length",Long.toString(limit));headers.put("Access-Control-Allow-Origin","*");
+            if(partial)headers.put("Content-Range","bytes "+start+"-"+end+"/"+size);
+            response.setResponseHeaders(headers);
+            return response;
+        }catch(Exception e){return null;}
+    }
     WebView web; Switch toggle;TextView status; boolean silent=false;
     GeolocationPermissions.Callback geoPending; String geoOrigin;
     void setToggle(boolean v){silent=true;toggle.setChecked(v);silent=false;}
@@ -46,6 +107,8 @@ public class NativeApp extends Activity {
         web.getSettings().setJavaScriptEnabled(true);web.getSettings().setDomStorageEnabled(true);
         web.setWebViewClient(new WebViewClient(){
             @Override public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest request){
+                WebResourceResponse saved=cachedRecitation(request);
+                if(saved!=null)return saved;
                 Uri u=request.getUrl();
                 if("https".equals(u.getScheme()) && "relaxed-kitsune-ff167d.netlify.app".equals(u.getHost()) && "/prayer-audio/takbir.mp3".equals(u.getPath())){
                     try {
