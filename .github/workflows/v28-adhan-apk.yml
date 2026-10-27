@@ -1,7 +1,7 @@
 name: Build V28 Adhan APK (test)
 on:
   push:
-    branches: [fix-v31-takbir-audio-20261027]
+    branches: [fix-v31-prayer-audio-cache-20261027]
     paths: ['android-adhan-v28/**', '.github/workflows/v28-adhan-apk.yml']
   workflow_dispatch:
 jobs:
