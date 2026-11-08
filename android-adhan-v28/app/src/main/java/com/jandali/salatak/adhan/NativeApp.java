@@ -42,7 +42,23 @@ public class NativeApp extends Activity {
         toggle=new Switch(this);toggle.setText("الأذان التلقائي — تفعيل / إلغاء");toggle.setTextSize(17);
         head.addView(toggle);status=new TextView(this);status.setTextSize(12);head.addView(status);
         head.setVisibility(View.GONE);
-        root.addView(head);web=new WebView(this);root.addView(web,new LinearLayout.LayoutParams(-1,0,1));setContentView(root);
+        root.addView(head);
+        FrameLayout webContainer=new FrameLayout(this);
+        web=new WebView(this);
+        webContainer.addView(web,new FrameLayout.LayoutParams(-1,-1));
+        ImageButton shareButton=new ImageButton(this);
+        shareButton.setImageResource(android.R.drawable.ic_menu_share);
+        shareButton.setContentDescription("مشاركة التطبيق");
+        shareButton.setBackgroundTintList(android.content.res.ColorStateList.valueOf(0xffebf5ef));
+        shareButton.setColorFilter(0xff207443);
+        int shareSize=(int)(48*getResources().getDisplayMetrics().density);
+        int margin=(int)(12*getResources().getDisplayMetrics().density);
+        FrameLayout.LayoutParams shareParams=new FrameLayout.LayoutParams(shareSize,shareSize,Gravity.TOP|Gravity.RIGHT);
+        shareParams.setMargins(margin,margin,margin,margin);
+        webContainer.addView(shareButton,shareParams);
+        shareButton.setOnClickListener(v->shareApplication());
+        root.addView(webContainer,new LinearLayout.LayoutParams(-1,0,1));
+        setContentView(root);
         web.getSettings().setJavaScriptEnabled(true);web.getSettings().setDomStorageEnabled(true);
         web.setWebViewClient(new WebViewClient(){
             @Override public void onPageFinished(WebView view,String url){super.onPageFinished(view,url);
@@ -71,6 +87,17 @@ public class NativeApp extends Activity {
             }
         },"AdhanSettingsVisibility");
 
+    }
+    void shareApplication(){
+        String apkUrl="https://github.com/hichamjandali-gif/salatak-with-imam/releases/download/v29.0-approved/Salatak_29_Approved.apk";
+        Intent send=new Intent(Intent.ACTION_SEND);
+        send.setType("text/plain");
+        send.putExtra(Intent.EXTRA_SUBJECT,"صلاتك مع الإمام");
+        send.putExtra(Intent.EXTRA_TEXT,"حمّل تطبيق صلاتك مع الإمام للأندرويد:\n"+apkUrl);
+        try{startActivity(Intent.createChooser(send,"مشاركة تطبيق صلاتك مع الإمام"));}
+        catch(android.content.ActivityNotFoundException e){
+            Toast.makeText(this,"لا يوجد تطبيق متاح للمشاركة",Toast.LENGTH_LONG).show();
+        }
     }
     void requestEnable(){
         if(!permitted(this)){
